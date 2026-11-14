@@ -1,4 +1,4 @@
-from feedback.stage1_load_predictions import get_dimension_key
+from feedback.stage1_load_predictions import _extract_letters, _is_correct, get_dimension_key
 from feedback.stage2_diagnosis import allocate_sombench_reports_by_qtype
 from feedback.stage3_synthesis import EmoBenchGroupedQuestionFlat, EmoBenchQuestionFlat, ToMBenchQuestionFlat
 from feedback.prompts import build_stage2_generation_from_report_prompt
@@ -115,3 +115,20 @@ def test_emobench_eu_prompt_requests_linked_grouped_questions():
 
     assert "both linked EU subquestions" in prompt
     assert "cause answer" in prompt
+
+
+def test_stage1_preserves_multiple_prediction_letters():
+    assert _extract_letters(r"\boxed{A,C}") == ["A", "C"]
+    assert _is_correct(r"\boxed{A,C}", ["A", "C"], prompt_type="mcq_multi")
+    assert not _is_correct(r"\boxed{A}", ["A", "C"], prompt_type="mcq_multi")
+
+
+def test_stage1_scores_grouped_predictions_against_each_subquestion():
+    meta = {
+        "sub_questions": [
+            {"correct_letters": ["C"]},
+            {"correct_letters": ["B"]},
+        ]
+    }
+    assert _is_correct(r"\boxed{C}\n\boxed{B}", [], prompt_type="mcq_grouped", meta=meta)
+    assert not _is_correct(r"\boxed{C}\n\boxed{A}", [], prompt_type="mcq_grouped", meta=meta)

@@ -84,6 +84,40 @@ _FALLBACK_REPORT = {
 }
 
 
+def _build_fallback_report(
+    dataset_name: str,
+    dimension: str,
+    bad_cases_batch: List[Dict[str, Any]],
+    reason: str,
+) -> Dict[str, Any]:
+    """Create an evidence-backed fallback when structured diagnosis fails."""
+    patterns = [
+        f"Structured diagnosis failed for {len(bad_cases_batch)} observed bad case(s); preserve the cases for later review.",
+    ]
+    for case in bad_cases_batch[:3]:
+        row = case.get("row_data", {}) or {}
+        question = str(row.get("question", "")).strip()[:160]
+        wrong = case.get("_wrong_answers", case.get("_wrong_answer", ""))
+        gold = case.get("_gold_answers", case.get("_gold_answer", ""))
+        patterns.append(f"Observed question={question!r}; model_answer={wrong!r}; gold_answer={gold!r}.")
+    operation = {
+        "FanToM": "information_access",
+        "EmoBench": "emotion_attribution",
+        "SoMBench": "social_inference",
+    }.get(dataset_name, "social_inference")
+    return {
+        "dimension": dimension,
+        "common_error_patterns": patterns,
+        "primary_cognitive_operation": operation,
+        "secondary_cognitive_operations": [],
+        "recommended_synthesis_themes": [f"{dataset_name} cases matching {dimension}"],
+        "difficulty_distribution": {"easy": 0.0, "medium": 0.5, "hard": 0.5},
+        "_is_fallback": True,
+        "_fallback_reason": reason,
+        "_fallback_case_count": len(bad_cases_batch),
+    }
+
+
 def _load_bad_cases_from_file(
     prediction_path: Path,
     data_path: Path,
@@ -430,6 +464,7 @@ def run_stage2_dimension_diagnosis(
     # 按维度采样 bad case，每 bad_cases_per_report 条生成一个报告
     all_prompts: List[str] = []
     all_meta: List[Dict[str, Any]] = []
+    all_batches: List[List[Dict[str, Any]]] = []
 
     # 读取已有报告，跳过已完成的 (dimension, case_idx) 对
     existing_pairs: set = set()
@@ -473,6 +508,7 @@ def run_stage2_dimension_diagnosis(
                 # 记录到报告 _meta，供 Stage 3 决定合成语言。
                 "lang": "zh" if dim.endswith("__zh") else "en",
             })
+            all_batches.append(batch)
 
     # 批量生成诊断报告
     if not all_prompts:
@@ -493,7 +529,7 @@ def run_stage2_dimension_diagnosis(
         )
 
         with open(reports_path, "a", encoding="utf-8") as f:
-            for meta_info, resp in zip(batch_meta, raw_results):
+            for local_idx, (meta_info, resp) in enumerate(zip(batch_meta, raw_results)):
                 result = resp.content if resp else None
                 if result is not None:
                     record = result.model_dump()
@@ -501,10 +537,8 @@ def run_stage2_dimension_diagnosis(
                     f.write(json.dumps(record, ensure_ascii=False) + "\n")
                     success_count += 1
                 else:
-                    fallback = dict(_FALLBACK_REPORT)
-                    fallback["dimension"] = meta_info["dimension"]
+                    fallback = _build_fallback_report(dataset_name, meta_info["dimension"], all_batches[batch_start + local_idx], "structured_output_failed")
                     fallback["_meta"] = meta_info
-                    fallback["_is_fallback"] = True
                     f.write(json.dumps(fallback, ensure_ascii=False) + "\n")
                     fallback_count += 1
 

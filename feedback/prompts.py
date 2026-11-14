@@ -483,8 +483,10 @@ def build_batch_diagnosis_prompt(
     for i, case in enumerate(bad_cases_batch, 1):
         actual_prompt = str(case.get("_actual_prompt", "")).strip()
         wrong_reasoning = str(case.get("_wrong_reasoning", "")).strip()
-        wrong_answer = str(case.get("_wrong_answer", "")).strip()
-        gold = str(case.get("_gold_answer", "")).strip()
+        wrong_value = case.get("_wrong_answers", case.get("_wrong_answer", ""))
+        gold_value = case.get("_gold_answers", case.get("_gold_answer", ""))
+        wrong_answer = json.dumps(wrong_value, ensure_ascii=False) if isinstance(wrong_value, (list, dict)) else str(wrong_value).strip()
+        gold = json.dumps(gold_value, ensure_ascii=False) if isinstance(gold_value, (list, dict)) else str(gold_value).strip()
 
         if len(actual_prompt) > 1500:
             actual_prompt = actual_prompt[:1300] + "\n...[truncated]"

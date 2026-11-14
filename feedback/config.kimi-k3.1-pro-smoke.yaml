@@ -31,7 +31,7 @@ leakage_guard:
 
 synthesis:
   max_retries_per_diagnosis: 2
-  bad_cases_per_report: 1
+  bad_cases_per_report: 3
   diagnosis_batch_size: 5
   synthesis_batch_size: 5
 

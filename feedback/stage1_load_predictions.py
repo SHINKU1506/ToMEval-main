@@ -22,22 +22,45 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
-def _extract_letter(text: Optional[str]) -> str:
-    """从模型回复中提取答案字母"""
+def _extract_letters(text: Optional[str]) -> List[str]:
+    """Extract an ordered answer-letter sequence from a model response."""
     if not text:
-        return ""
+        return []
     text = str(text).strip()
-    m = re.search(r"\b([A-Oa-o])\b", text)
-    if m:
-        return m.group(1).upper()
+    boxed = re.findall(r"\\boxed\s*\{\s*([^}]+?)\s*\}", text, re.IGNORECASE)
+    source = ",".join(boxed) if boxed else text
+    letters = re.findall(r"(?<![A-Za-z])([A-Oa-o])(?![A-Za-z])", source)
+    if letters:
+        return [letter.upper() for letter in letters]
     if text and text[0].isalpha():
-        return text[0].upper()
-    return text.upper()[:1]
+        return [text[0].upper()]
+    return []
 
 
-def _is_correct(raw_prediction: Optional[str], correct_letters: List[str]) -> bool:
-    letter = _extract_letter(raw_prediction)
-    return letter in [c.upper() for c in correct_letters]
+def _extract_letter(text: Optional[str]) -> str:
+    """Backward-compatible single-choice extraction."""
+    letters = _extract_letters(text)
+    return letters[0] if letters else ""
+
+
+def _is_correct(
+    raw_prediction: Optional[str],
+    correct_letters: List[str],
+    prompt_type: str = "mcq_single",
+    meta: Optional[Dict[str, Any]] = None,
+) -> bool:
+    predicted = _extract_letters(raw_prediction)
+    if prompt_type == "mcq_grouped":
+        expected = [
+            str((sub or {}).get("correct_letters", [""])[0]).upper()
+            for sub in (meta or {}).get("sub_questions", [])
+            if (sub or {}).get("correct_letters")
+        ]
+        return bool(expected) and predicted == expected
+    expected = [str(letter).upper() for letter in correct_letters]
+    if prompt_type == "mcq_multi":
+        return bool(expected) and set(predicted) == set(expected) and len(predicted) == len(expected)
+    return bool(expected) and bool(predicted) and predicted[0] == expected[0]
 
 
 def _find_prediction_file(results_root: Path, dataset_name: str, model: str, exp: Optional[str] = None) -> Optional[Path]:
@@ -179,7 +202,7 @@ def load_bad_cases_from_predictions(
 
         logger.info(f"       ✓ 加载 {len(model_records)} 个样本")
 
-    # 对每个样本，把所有答错的 (model, repeat) 各自产生一条 bad case
+    # 对每个样本按 model 聚合错误 repeat，避免同一题被重复采样成多个诊断案例。
     bad_cases: List[Dict[str, Any]] = []
 
     def _judge_is_wrong(model_name: str, rec: Dict) -> bool:
@@ -192,7 +215,12 @@ def load_bad_cases_from_predictions(
                 return not is_correct
         # fallback：规则判断
         pred_str = str(rec.get("raw_prediction", "") or rec.get("pred", {}).get("content", "") or "")
-        return not _is_correct(pred_str, rec.get("correct_letters", []))
+        return not _is_correct(
+            pred_str,
+            rec.get("correct_letters", []),
+            prompt_type=str(rec.get("prompt_type", "mcq_single")),
+            meta=rec.get("meta") or {},
+        )
 
     for sample_idx in sorted(sample_records.keys()):
         model_data = sample_records[sample_idx]
@@ -202,11 +230,20 @@ def load_bad_cases_from_predictions(
         ref_rec = model_data[first_model][0]
 
         correct_letters = ref_rec.get("correct_letters", [])
-        gold = correct_letters[0] if correct_letters else ""
+        ref_prompt_type = str(ref_rec.get("prompt_type", "mcq_single"))
+        ref_meta = ref_rec.get("meta", {}) or {}
+        if ref_prompt_type == "mcq_grouped":
+            gold = [
+                list((sub or {}).get("correct_letters", []))
+                for sub in ref_meta.get("sub_questions", [])
+            ]
+        elif ref_prompt_type == "mcq_multi":
+            gold = list(correct_letters)
+        else:
+            gold = correct_letters[0] if correct_letters else ""
 
         # SoMBench Q4 是开放题（无 correct_letters）：gold 取 q4_reference 拼接，
         # 供诊断 prompt 呈现参考要点;_wrong_answer 改用模型原文（见下方组装处）。
-        ref_meta = ref_rec.get("meta", {}) or {}
         is_sm_q4 = dataset_name == "SoMBench" and str(ref_meta.get("qtype")) == "Q4"
         if is_sm_q4:
             gold = "\n".join(str(p) for p in (ref_meta.get("q4_reference") or []) if str(p).strip())
@@ -230,33 +267,37 @@ def load_bad_cases_from_predictions(
         if total_wrong_count == 0:
             continue
 
-        # 每个答错的 repeat 单独产生一条 bad case，_difficulty = 总答错次数
+        # 同一 model/sample 的多个错误 repeat 合并，保留完整答案序列和 repeat 列表。
         for model_name, model_recs in model_data.items():
-            for r in model_recs:
-                if not _judge_is_wrong(model_name, r):
-                    continue
+            wrong_recs = [r for r in model_recs if _judge_is_wrong(model_name, r)]
+            if not wrong_recs:
+                continue
+            wrong_answers = []
+            for r in wrong_recs:
                 pred_str = str(r.get("raw_prediction", "") or r.get("pred", {}).get("content", "") or "")
-                # 开放题模型输出是自由文本而非字母:Q4 直接取原文（截断），其余题型取字母。
-                wrong_answer = pred_str.strip()[:500] if is_sm_q4 else _extract_letter(pred_str)
-                bad_case = {
+                wrong_answers.append(pred_str.strip()[:500] if is_sm_q4 else _extract_letters(pred_str))
+            first_wrong = wrong_recs[0]
+            bad_case = {
                     "sample_idx":       sample_idx,
                     "dataset":          dataset_name,
                     "row_data":         row_data,
-                    "_actual_prompt":   r.get("prompt", ""),
-                    "_wrong_answer":    wrong_answer,
-                    "_wrong_reasoning": str(r.get("pred", {}).get("reasoning", "") or "").strip(),
+                    "_actual_prompt":   first_wrong.get("prompt", ""),
+                    "_wrong_answer":    wrong_answers[0],
+                    "_wrong_answers":   wrong_answers,
+                    "_wrong_reasoning": str(first_wrong.get("pred", {}).get("reasoning", "") or "").strip(),
                     "_gold_answer":     gold,
+                    "_gold_answers":    gold,
                     "_difficulty":      total_wrong_count,
                     "_model":           model_name,
-                    "_repeat":          r.get("repeat", 0),
+                    "_repeats":         [r.get("repeat", 0) for r in wrong_recs],
                 }
-                bad_cases.append(bad_case)
+            bad_cases.append(bad_case)
 
     total_bad = len(bad_cases)
-    logger.info(f"    📊 收集到 {total_bad} 条错误记录（跨模型、跨 repeat）")
+    logger.info(f"    📊 收集到 {total_bad} 条错误样本（已按 model/sample 聚合 repeat）")
 
     # difficulty 高的优先，同 sample_idx 内按 model/repeat 稳定排序
-    bad_cases.sort(key=lambda c: (-c["_difficulty"], c["sample_idx"], c["_model"], c["_repeat"]))
+    bad_cases.sort(key=lambda c: (-c["_difficulty"], c["sample_idx"], c["_model"]))
 
     if max_bad_cases > 0 and len(bad_cases) > max_bad_cases:
         import collections
