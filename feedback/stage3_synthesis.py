@@ -46,6 +46,19 @@ def _parse_options_from_question(q_text: str, correct_letter: str):
     return correct_text, wrong_texts
 
 
+def _strip_embedded_options(q_text: str) -> str:
+    """Remove the answer-choice suffix from a ToMBench question.
+
+    The generator schema historically asked the model to place options in the
+    question. The standardized evaluator renders options separately, so
+    retaining that suffix creates two conflicting option blocks.
+    """
+    match = re.search(r"(?<![A-Za-z])A[.．)]\s+", q_text, re.IGNORECASE)
+    if not match:
+        return q_text.strip()
+    return q_text[: match.start()].rstrip()
+
+
 # ============ 数据合成Schema ============
 
 # ---- ToMBench ----
@@ -71,7 +84,7 @@ class ToMBenchQuestionFlat(BaseModel):
         correct_text, wrong_texts = _parse_options_from_question(q_text, self.correct_letter)
         return {
             "story": self.story,
-            "question": q_text,
+            "question": _strip_embedded_options(q_text),
             "answer": {
                 "correct_answers": [correct_text],
                 "wrong_answers": wrong_texts,
