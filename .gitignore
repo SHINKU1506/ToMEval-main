@@ -78,6 +78,7 @@ train_datasets
 AGENTS.md
 tests/*
 !tests/test_synthesize_grpo_data.py
+!tests/test_feedback_regressions.py
 figures/
 .pytest_cache/
 

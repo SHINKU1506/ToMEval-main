@@ -227,6 +227,53 @@ def allocate_reports_by_dimension(
     return raw
 
 
+def allocate_sombench_reports_by_qtype(
+    dim_counts: Dict[str, int],
+    total_reports: int,
+    dim_totals: Optional[Dict[str, int]] = None,
+) -> Dict[str, int]:
+    """Allocate SoMBench reports by qtype before allocating dimensions.
+
+    Q1-Q4 are distinct evaluation formats. A flat dimension allocation can
+    spend every report on Q4 because Q4 contributes many high-error buckets.
+    Every qtype represented in the bad-case pool receives an equal base share,
+    then that share is allocated across its dimensions.
+    """
+    if not dim_counts or total_reports <= 0:
+        return {}
+
+    by_qtype: Dict[str, Dict[str, int]] = {}
+    for key, count in dim_counts.items():
+        parts = str(key).split("__")
+        qtype = parts[1] if len(parts) >= 2 and parts[1] in {"Q1", "Q2", "Q3", "Q4"} else "unknown"
+        by_qtype.setdefault(qtype, {})[key] = count
+
+    qtypes = sorted(by_qtype)
+    if len(qtypes) > total_reports:
+        qtypes = sorted(qtypes, key=lambda q: -sum(by_qtype[q].values()))[:total_reports]
+
+    base, remainder = divmod(total_reports, len(qtypes))
+    qtype_quota = {q: base for q in qtypes}
+    for q in qtypes[:remainder]:
+        qtype_quota[q] += 1
+
+    result: Dict[str, int] = {}
+    for qtype in qtypes:
+        q_dim_totals = {
+            key: value
+            for key, value in (dim_totals or {}).items()
+            if key in by_qtype[qtype]
+        }
+        result.update(
+            allocate_reports_by_dimension(
+                by_qtype[qtype],
+                qtype_quota[qtype],
+                q_dim_totals or None,
+            )
+        )
+    return result
+
+
 def sample_bad_cases_weighted(
     bad_cases: List[Dict[str, Any]],
     n_samples: int,
@@ -363,7 +410,10 @@ def run_stage2_dimension_diagnosis(
         logger.info(f"    📈 使用维度错误率分配报告配额")
 
     # 按维度错误率（或 fallback 到 bad case 数量比例）分配报告配额
-    allocations = allocate_reports_by_dimension(dim_counts, total_reports, dim_totals=dim_totals)
+    if dataset_name == "SoMBench":
+        allocations = allocate_sombench_reports_by_qtype(dim_counts, total_reports, dim_totals=dim_totals)
+    else:
+        allocations = allocate_reports_by_dimension(dim_counts, total_reports, dim_totals=dim_totals)
     logger.info(f"    📊 报告分配: 总计 {sum(allocations.values())} 份")
 
     # 落盘维度覆盖率
