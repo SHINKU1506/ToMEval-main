@@ -1,14 +1,14 @@
-# 本机全量 API 合成配置。
+# 本机全量 API 合成配置。评测/诊断角色使用 Astra，复核使用 Opus 5.5，合成角色使用 Gemini-4-Hydrogen。
 # 连接信息从 ../api_config.toml 的现有本地 profile 继承，不在此文件保存 key。
 
 stage: all
 max_bad_cases: 0
 
 api_config: ../api_config.toml
-api_profile: sombench.judge1
+api_profile: synthesis
 
 synthesis_model:
-  model_name: kimi-k3.1-pro
+  model_name: gemini-4-hydrogen
   api_url: ""
   api_key: ""
   temperature: 0.6
@@ -29,16 +29,16 @@ roles:
     presence_penalty: 0
     enable_thinking: false
   synthesis:
-    api_profile: sombench.judge1
-    model_name: kimi-k3.1-pro
+    api_profile: synthesis
+    model_name: gemini-4-hydrogen
     max_workers: 8
     max_tokens: 32768
     temperature: 0.6
     presence_penalty: 0
     enable_thinking: false
   repair:
-    api_profile: sombench.judge1
-    model_name: kimi-k3.1-pro
+    api_profile: synthesis
+    model_name: gemini-4-hydrogen
     max_workers: 8
     max_tokens: 8192
     temperature: 0.3

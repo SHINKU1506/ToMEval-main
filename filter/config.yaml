@@ -18,8 +18,8 @@ roles:
     max_tokens: 8192
     enable_thinking: false
   repair:
-    api_profile: sombench.judge1
-    model_name: kimi-k3.1-pro
+    api_profile: synthesis
+    model_name: gemini-4-hydrogen
     max_workers: 16
     temperature: 0.6
     presence_penalty: 0

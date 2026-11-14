@@ -5,17 +5,29 @@
 stage: all            # all / load / diagnose / synth / dedupe
 max_bad_cases: 0      # 每数据集最多 bad case 数（0=不限）
 
-# ── 合成模型（DashScope deepseek-v4-flash，诊断 + 生成用）────────────────────
+# ── 模型路由：诊断使用 Astra，生成使用 Gemini-4-Hydrogen ──────────────────
+api_config: ../api_config.toml
+api_profile: synthesis
+
 synthesis_model:
-  api_url: https://dashscope.aliyuncs.com/compatible-mode/v1
-  api_key: <YOUR_API_KEY>
-  model_name: deepseek-v4-flash
+  api_url: ""
+  api_key: ""
+  model_name: gemini-4-hydrogen
   temperature: 0.6
   max_tokens: 32768
   max_workers: 16
   enable_thinking: false
   system_prompt: ""
   request_interval_seconds: 1    # 每两次请求提交之间的最小间隔（秒），避免触发 rate limit
+
+roles:
+  diagnosis:
+    api_profile: sombench.judge1
+    model_name: gpt-6-astra
+    max_workers: 4
+    max_tokens: 32768
+    temperature: 0.6
+    enable_thinking: false
 
 # ── 路径配置 ─────────────────────────────────────────────────────────────────
 output_path: feedback_output
