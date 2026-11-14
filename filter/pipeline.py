@@ -168,10 +168,19 @@ def normalize_df(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def prepare_filter_input(rows: List[Dict[str, Any]], dataset: str) -> List[Dict[str, Any]]:
+    """Collapse dataset-level grouped samples before filter evaluation."""
+    if dataset != "EmoBench":
+        return rows
+    from tasks.EmoBench.prompt import prepare_samples
+    return prepare_samples(rows)
+
+
 def load_split_df(
     split_file: Path,
     split_root: Path,
     config: Dict[str, Any],
+    dataset: str = "",
 ) -> pd.DataFrame:
     """加载单个 split 文件，应用采样，保存 sampled_input.parquet，返回规范化后的 DataFrame。
 
@@ -189,6 +198,8 @@ def load_split_df(
             logger.info(f"[load_split] 采样 {max_samples}/{original_len} 条 from {split_file.name}")
 
     df = normalize_df(df)
+    if dataset == "EmoBench":
+        df = pd.DataFrame(prepare_filter_input(df.to_dict(orient="records"), dataset))
     logger.info(f"[load_split] rows={len(df)} from {source}")
 
     # 持久化采样结果，供 finalize 使用
@@ -695,7 +706,7 @@ def run_filter_loop(
     logger.info(f"{'='*60}")
 
     # 加载并采样，结果持久化到 sampled_input.parquet
-    input_df = load_split_df(split_file, split_root, config)
+    input_df = load_split_df(split_file, split_root, config, dataset=dataset)
     if input_df.empty:
         logger.warning(f"[{split_stem}] 输入为空，跳过")
         return {"split": split_stem, "iters_run": 0, "max_iter": max_iter,

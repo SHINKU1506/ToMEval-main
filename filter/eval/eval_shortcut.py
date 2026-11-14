@@ -32,6 +32,8 @@ from filter.utils import (
     is_correct_open,
     resolve_sample_id,
     row_to_sample,
+    is_grouped_sample,
+    sample_prompt_type,
     write_parquet,
 )
 from src.evaluation.lang import get_sample_lang
@@ -124,7 +126,7 @@ def _run_mcq_dimension(
         per_row_skip: List[bool] = []
 
         for i, sample in enumerate(samples):
-            if not sample["answer"]["wrong_answers"]:
+            if is_grouped_sample(sample) or not sample["answer"]["wrong_answers"]:
                 # 没有 wrong_answers 的样本不是 MCQ，跳过该维度（保留 pass=0 不会触发 shortcut）
                 prompts.append("")
                 per_row_correct_letters.append([])
@@ -171,11 +173,14 @@ def _run_no_options_dimension(
 
     pass_counts = [0] * n
     for trial in range(k):
-        prompts = [build_no_options_prompt(s) for s in samples]
+        prompts = [build_no_options_prompt(s) if not is_grouped_sample(s) else "" for s in samples]
+        active_indices = [i for i, prompt in enumerate(prompts) if prompt]
+        if not active_indices:
+            continue
         responses = simple_client.batch_generate(
-            prompts, desc=f"shortcut[{dataset}]/no_options trial {trial + 1}/{k}"
+            [prompts[i] for i in active_indices], desc=f"shortcut[{dataset}]/no_options trial {trial + 1}/{k}"
         )
-        for i, resp in enumerate(responses):
+        for i, resp in zip(active_indices, responses):
             if is_correct_open(
                 resp,
                 samples[i]["answer"]["correct_answers"],
@@ -233,7 +238,7 @@ def run_shortcut_on_df(
         sample = row_to_sample(row)
         samples.append(sample)
         sample_ids.append(resolve_sample_id(row, idx))
-        prompt_types.append(compute_prompt_type(sample["answer"]))
+        prompt_types.append(sample_prompt_type(sample))
 
     # 三个维度独立跑
     no_story_pass = (

@@ -45,12 +45,26 @@ def row_to_sample(row: Any) -> Dict[str, Any]:
     wrong = list(wrong_raw) if wrong_raw is not None else []
     meta = row.get("meta")
     return {
+        "sample_id": resolve_sample_id(row, 0),
         "story": str(row.get("story", "") or ""),
         "question": str(row.get("question", "") or ""),
         "answer": {"correct_answers": correct, "wrong_answers": wrong},
         # 透传 meta，让下游 prompt 构造能感知样本语言（meta.lang / meta.language）。
         "meta": meta if isinstance(meta, dict) else {},
     }
+
+
+def sample_prompt_type(sample: Any) -> str:
+    meta = sample.get("meta") if isinstance(sample, dict) else {}
+    if isinstance(meta, dict) and (meta.get("prompt_type_override") == "mcq_grouped" or meta.get("sub_questions")):
+        return "mcq_grouped"
+    answer = sample.get("answer") if isinstance(sample, dict) else {}
+    from src.evaluation.prompts import prompt_type
+    return prompt_type(answer or {"correct_answers": [], "wrong_answers": []})
+
+
+def is_grouped_sample(sample: Any) -> bool:
+    return sample_prompt_type(sample) == "mcq_grouped"
 
 
 # open 题 F1 判分的默认阈值（与 src/evaluation/open_judge 的 f1 模式同量纲）。
@@ -91,7 +105,7 @@ def is_correct_open(
     return max_f1(pred, golds, lang) >= threshold
 
 
-def is_correct_mcq(prompt_type: str, response: Any, correct_letters: List[str]) -> bool:
+def is_correct_mcq(prompt_type: str, response: Any, correct_letters: Any) -> bool:
     """判断 MCQ 答案是否正确。
 
     仅用于 mcq_single / mcq_multi。open 题请改用 is_correct_open（F1 判分）——
@@ -114,6 +128,8 @@ def is_correct_mcq(prompt_type: str, response: Any, correct_letters: List[str]) 
         return pred in correct_letters
     if prompt_type == "mcq_multi":
         return pred is not None and set(pred) == set(correct_letters)
+    if prompt_type == "mcq_grouped":
+        return pred is not None and pred == [str(x).upper() for x in correct_letters]
     # open 题不应再走本函数（保留兜底：无字母可比，判错）。
     return False
 
@@ -177,6 +193,8 @@ def stringify_answer_list(values: Any, separator: str = ", ") -> str:
 __all__ = [
     "resolve_sample_id",
     "row_to_sample",
+    "sample_prompt_type",
+    "is_grouped_sample",
     "is_correct_mcq",
     "is_correct_open",
     "DEFAULT_OPEN_F1_THRESHOLD",

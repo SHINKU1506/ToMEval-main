@@ -163,6 +163,18 @@ def build_prompt(
     option_map: Optional[Dict[str, str]],
     include_instruction: bool = True,
 ) -> str:
+    meta = sample.get("meta") or {}
+    if meta.get("prompt_type_override") == "mcq_grouped" or meta.get("sub_questions"):
+        lang = get_sample_lang(meta)
+        parts = [sample["story"]]
+        for index, sub in enumerate(meta.get("sub_questions") or [], start=1):
+            options = sub.get("options") or {}
+            parts.append("Question %d:\n%s\n%s" % (index, sub.get("question", ""), render_options_block(options)))
+        body = "\n\n".join(parts)
+        if include_instruction:
+            body += "\n\n" + boxed_directive(lang, "mcq_grouped", reasoning=False)
+        return body.rstrip()
+
     current_prompt_type = prompt_type(sample["answer"])
     # 指令语言跟随样本语言（meta.lang / meta.language），结构协议不变。
     lang = get_sample_lang(sample.get("meta"))
@@ -241,6 +253,15 @@ def extract_prediction_from_text(
     if boxed is None:
         return None
 
+    if current_prompt_type == "mcq_grouped":
+        values = []
+        for box in re.findall(r"\\box(?:ed)?\s*\{([^{}]*)\}", text):
+            letters = re.findall(r"[A-Za-z]", box)
+            if len(letters) != 1:
+                return None
+            values.append(letters[0].upper())
+        return values or None
+
     if current_prompt_type == "mcq_multi":
         # 从 boxed 内容提取字母列表并去重，天然兼容 "A,C" / "A, C" / "AC" 等写法。
         letters = []
@@ -263,7 +284,7 @@ def _normalize_agent_letters(current_prompt_type: PromptType, text: str) -> Any:
     - mcq_single / mcq_grouped:返回首个字母(大写)。
     无任何字母时返回 None → 落进现有 extraction_failed 判错，不 crash。
     """
-    if current_prompt_type == "mcq_multi":
+    if current_prompt_type in {"mcq_multi", "mcq_grouped"}:
         letters: List[str] = []
         seen = set()
         for token in re.findall(r"[A-Za-z]", text):

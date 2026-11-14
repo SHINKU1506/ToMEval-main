@@ -4,6 +4,9 @@ from feedback.stage3_synthesis import EmoBenchGroupedQuestionFlat, EmoBenchQuest
 from feedback.prompts import build_stage2_generation_from_report_prompt
 from feedback.report_summary import generate_summary_report
 from filter.eval.eval_answerability_full import _build_prompt as build_answerability_prompt
+from filter.pipeline import prepare_filter_input
+from filter.utils import is_correct_mcq, row_to_sample, sample_prompt_type
+from src.evaluation.prompts import extract_prediction_value
 
 
 def test_sombench_report_allocation_preserves_available_qtypes():
@@ -24,7 +27,8 @@ def test_sombench_report_allocation_preserves_available_qtypes():
     assert sum(allocations.values()) == 80
     assert set(by_qtype) == {"Q1", "Q2", "Q3", "Q4"}
     assert all(value >= 1 for value in by_qtype.values())
-    assert by_qtype["Q4"] < 80
+    assert by_qtype["Q4"] <= 8
+    assert by_qtype["Q3"] >= 20
 
 
 def test_tombench_storage_removes_embedded_options_from_question():
@@ -119,6 +123,26 @@ def test_emobench_eu_prompt_requests_linked_grouped_questions():
     assert "cause answer" in prompt
 
 
+def test_sombench_q3_variants_rotate_verdict_targets():
+    from feedback.prompts import build_stage2_generation_from_report_prompt
+
+    report = {
+        "dimension": "1.1.1__Q3__zh",
+        "common_error_patterns": [],
+        "primary_cognitive_operation": "social_inference",
+        "difficulty_distribution": {},
+        "_meta": {"dimension": "1.1.1__Q3__zh", "lang": "zh"},
+    }
+    prompts = [
+        build_stage2_generation_from_report_prompt(report, "SoMBench", variant_index=i, lang="zh")
+        for i in range(3)
+    ]
+
+    assert "correct_verdict\": \"是\"" in prompts[0]
+    assert "correct_verdict\": \"否\"" in prompts[1]
+    assert "correct_verdict\": \"无法确定\"" in prompts[2]
+
+
 def test_stage1_preserves_multiple_prediction_letters():
     assert _extract_letters(r"\boxed{A,C}") == ["A", "C"]
     assert _is_correct(r"\boxed{A,C}", ["A", "C"], prompt_type="mcq_multi")
@@ -182,3 +206,44 @@ def test_emobench_grouped_reports_use_grouped_schema_route():
     from feedback.stage3_synthesis import EmoBenchGroupedSynthesisOutput
 
     assert EmoBenchGroupedSynthesisOutput.__name__ == "EmoBenchGroupedSynthesisOutput"
+
+
+def test_filter_merges_emobench_eu_rows_before_evaluation():
+    rows = [
+        {
+            "story": "A story.", "question": "How does Alex feel?",
+            "answer": {"correct_answers": ["Relief"], "wrong_answers": ["Anger", "Fear"]},
+            "meta": {"id": "g_emotion", "subset": "emotional_understanding", "language": "en",
+                     "question_subtype": "emotion", "paired_group_id": "group-1",
+                     "dimension": ["emotion_recognition"]},
+        },
+        {
+            "story": "A story.", "question": "Why does Alex feel that way?",
+            "answer": {"correct_answers": ["The problem ended"], "wrong_answers": ["It worsened", "No reason"]},
+            "meta": {"id": "g_cause", "subset": "emotional_understanding", "language": "en",
+                     "question_subtype": "cause", "paired_group_id": "group-1",
+                     "dimension": ["emotion_cause"]},
+        },
+    ]
+
+    merged = prepare_filter_input(rows, "EmoBench")
+
+    assert len(merged) == 1
+    assert merged[0]["meta"]["prompt_type_override"] == "mcq_grouped"
+    assert len(merged[0]["meta"]["sub_questions"]) == 2
+
+
+def test_filter_grouped_rows_use_grouped_prompt_and_reward_parsing():
+    merged = prepare_filter_input([
+        {"story": "S", "question": "E", "answer": {"correct_answers": ["r"], "wrong_answers": ["a"]},
+         "meta": {"id": "e", "subset": "emotional_understanding", "question_subtype": "emotion", "paired_group_id": "g", "language": "en"}},
+        {"story": "S", "question": "C", "answer": {"correct_answers": ["why"], "wrong_answers": ["no"]},
+         "meta": {"id": "c", "subset": "emotional_understanding", "question_subtype": "cause", "paired_group_id": "g", "language": "en"}},
+    ], "EmoBench")
+    sample = row_to_sample(merged[0])
+
+    assert sample_prompt_type(sample) == "mcq_grouped"
+    from types import SimpleNamespace
+    response = SimpleNamespace(content="\\boxed{A}\n\\boxed{C}")
+    assert extract_prediction_value("mcq_grouped", response) == ["A", "C"]
+    assert is_correct_mcq("mcq_grouped", response, ["A", "C"])

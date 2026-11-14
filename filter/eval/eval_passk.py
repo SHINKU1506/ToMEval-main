@@ -22,6 +22,7 @@ from filter.utils import (
     DEFAULT_OPEN_F1_THRESHOLD,
     is_correct_mcq,
     is_correct_open,
+    sample_prompt_type,
     resolve_sample_id,
     row_to_sample,
     write_parquet,
@@ -86,7 +87,7 @@ def run_passk_on_df(
         sample = row_to_sample(row)
         samples.append(sample)
         sample_ids.append(resolve_sample_id(row, idx))
-        prompt_types.append(compute_prompt_type(sample["answer"]))
+        prompt_types.append(sample_prompt_type(sample))
 
     pass_counts = [0] * n
 
@@ -94,9 +95,17 @@ def run_passk_on_df(
         prompts: List[str] = []
         per_row_correct_letters: List[List[str]] = []
         for i, sample in enumerate(samples):
-            option_map, c_letters, _w_letters, _seed = build_option_bundle(
-                dataset, sample_ids[i], sample["answer"], trial
-            )
+            if prompt_types[i] == "mcq_grouped":
+                option_map = None
+                c_letters = [
+                    str((sub or {}).get("correct_letters", [""])[0]).upper()
+                    for sub in (sample.get("meta") or {}).get("sub_questions", [])
+                    if (sub or {}).get("correct_letters")
+                ]
+            else:
+                option_map, c_letters, _w_letters, _seed = build_option_bundle(
+                    dataset, sample_ids[i], sample["answer"], trial
+                )
             prompts.append(build_prompt(sample, option_map))
             per_row_correct_letters.append(list(c_letters))
 
