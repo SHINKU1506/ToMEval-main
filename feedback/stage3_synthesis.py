@@ -690,7 +690,7 @@ def synthesize_from_reports(
                 target_count=1,
                 previous_question=last_failed.get((r_idx, s_idx)) if round_idx > 0 else None,
                 lang=str((reports[r_idx].get("_meta") or {}).get("lang") or "en"),
-            )
+            ) + f"\n\nThis is variant {s_idx + 1} for the same diagnosis. Use a distinct scenario, names, and surface structure from the other variants."
             for (r_idx, s_idx) in pending_pairs
         ]
 
@@ -727,6 +727,17 @@ def synthesize_from_reports(
                 r = resp.content if resp else None
                 if r is not None and hasattr(r, 'questions') and r.questions:
                     q = r.questions[0]
+                    if dataset_name == "HiToM":
+                        wrong_count = len({
+                            str(getattr(q, f"wrong_{i}", "")).strip()
+                            for i in range(1, 15)
+                            if str(getattr(q, f"wrong_{i}", "")).strip()
+                        })
+                        if wrong_count < 14:
+                            last_failed[pair] = {
+                                "_failure_reason": f"HiToM requires 14 unique distractors; got {wrong_count}",
+                            }
+                            continue
                     if hasattr(q, "to_storage_rows"):
                         q_rows = q.to_storage_rows()
                     elif hasattr(q, "to_storage_dict"):

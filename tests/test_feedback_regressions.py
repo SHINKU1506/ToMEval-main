@@ -132,3 +132,19 @@ def test_stage1_scores_grouped_predictions_against_each_subquestion():
     }
     assert _is_correct(r"\boxed{C}\n\boxed{B}", [], prompt_type="mcq_grouped", meta=meta)
     assert not _is_correct(r"\boxed{C}\n\boxed{A}", [], prompt_type="mcq_grouped", meta=meta)
+
+
+def test_retry_prompt_reports_structured_output_failure():
+    prompt = build_stage2_generation_from_report_prompt(
+        report={
+            "dimension": "false_belief",
+            "common_error_patterns": [],
+            "primary_cognitive_operation": "belief_state_update",
+            "difficulty_distribution": {},
+        },
+        dataset_name="BigToM",
+        previous_question={"_failure_reason": "structured_output_failed"},
+    )
+
+    assert "structured output failed" in prompt.lower()
+    assert "too easy" not in prompt.lower()

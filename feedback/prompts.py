@@ -739,8 +739,17 @@ def build_stage2_generation_from_report_prompt(
     )
 
     if previous_question is not None:
+        failure_reason = previous_question.get("_failure_reason") if isinstance(previous_question, dict) else None
         prev_str = json.dumps(previous_question, indent=2, ensure_ascii=False)
-        retry_feedback = (
+        if failure_reason:
+            retry_feedback = (
+                "## RETRY — Previous Attempt Failed Structured Validation\n"
+                f"The previous generation failed because: {str(failure_reason).replace('_', ' ')}.\n"
+                "Return a complete object matching the schema exactly. Do not omit required fields.\n\n"
+                f"Previous attempt metadata: {prev_str}\n\n"
+            )
+        else:
+            retry_feedback = (
             "## ⚠ RETRY — Previous Attempt Was Too Easy\n"
             "The question below was generated for this same error pattern but rejected because "
             "the target model answered it correctly every time. "
@@ -752,7 +761,7 @@ def build_stage2_generation_from_report_prompt(
             "- Make at least one wrong answer represent EXACTLY what the model outputs when it "
             f"skips {primary_op} — it must be irresistible to a model that shortcuts\n"
             "- Use a completely different story scenario (new names, setting, situation)\n\n"
-        )
+            )
     else:
         retry_feedback = ""
 
