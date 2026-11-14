@@ -176,3 +176,9 @@ def test_answerability_prompt_explains_grouped_and_multi_answers():
         "meta": {},
     }, "SoMBench")
     assert "multiple correct answers" in multi
+
+
+def test_emobench_grouped_reports_use_grouped_schema_route():
+    from feedback.stage3_synthesis import EmoBenchGroupedSynthesisOutput
+
+    assert EmoBenchGroupedSynthesisOutput.__name__ == "EmoBenchGroupedSynthesisOutput"

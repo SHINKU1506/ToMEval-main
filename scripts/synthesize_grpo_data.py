@@ -16,6 +16,7 @@ import argparse
 import json
 import logging
 import sys
+import tomllib
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
@@ -252,7 +253,25 @@ def generate_candidates(
 
 def load_synthesis_config(path: Path) -> Dict[str, Any]:
     config = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    model_config = config.get("synthesis_model") or config.get("llm")
+    model_config = dict(config.get("synthesis_model") or config.get("llm") or {})
+    role = (config.get("roles") or {}).get("synthesis")
+    if isinstance(role, dict):
+        model_config.update(role)
+    api_config_path = config.get("api_config")
+    profile_name = model_config.get("api_profile") or config.get("api_profile")
+    if api_config_path and profile_name:
+        api_path = (path.parent / str(api_config_path)).resolve()
+        with api_path.open("rb") as handle:
+            api_config = tomllib.load(handle)
+        profile: Any = api_config
+        for part in str(profile_name).split("."):
+            if not isinstance(profile, dict) or part not in profile:
+                raise KeyError(f"API profile not found: {profile_name}")
+            profile = profile[part]
+        if isinstance(profile, dict):
+            for key in ("api_url", "api_key"):
+                if not model_config.get(key) and profile.get(key):
+                    model_config[key] = profile[key]
     if not isinstance(model_config, dict):
         raise ValueError("config must contain synthesis_model or llm mapping")
     return dict(model_config)

@@ -702,7 +702,7 @@ def synthesize_from_reports(
 
             # SoMBench 一个 batch 可能混不同 qtype（schema），按 schema 子分组各调一次，
             # 再按原顺序拼回，保持与 batch_pairs 对齐。其余数据集走单一 schema。
-            if dataset_name == "SoMBench":
+            if dataset_name in {"SoMBench", "EmoBench"}:
                 groups: Dict[Any, List[int]] = {}
                 for i, (r_idx, _s) in enumerate(batch_pairs):
                     groups.setdefault(_schema_for_report(r_idx), []).append(i)

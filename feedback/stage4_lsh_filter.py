@@ -297,7 +297,8 @@ def save_as_parquet(rows: List[dict], path: Path) -> None:
 
     path.parent.mkdir(parents=True, exist_ok=True)
     if not rows:
-        logger.warning(f"  No rows to save to {path}")
+        logger.warning(f"  No rows to save to {path}; writing an empty parquet")
+        pq.write_table(pa.table({}), str(path))
         return
     clean_rows = [{k: v for k, v in r.items() if not k.startswith("_")} for r in rows]
     pq.write_table(pa.Table.from_pylist(clean_rows), str(path))

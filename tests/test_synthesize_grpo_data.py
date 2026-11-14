@@ -12,6 +12,7 @@ from scripts.synthesize_grpo_data import (
     candidate_to_grpo_record,
     validate_candidate,
 )
+from scripts.synthesize_grpo_data import load_synthesis_config
 
 
 def test_build_mutation_plan_has_stable_grouped_mutations():
@@ -125,3 +126,21 @@ def test_script_entrypoint_supports_dry_run_from_repo_root(tmp_path):
 
     assert result.returncode == 0, result.stderr
     assert len(output_path.read_text(encoding="utf-8").splitlines()) == 5
+
+
+def test_load_synthesis_config_resolves_role_api_profile(tmp_path):
+    (tmp_path / "api.toml").write_text(
+        "[provider.profile]\napi_url = \"https://example.test/v1\"\napi_key = \"secret\"\n",
+        encoding="utf-8",
+    )
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        "api_config: api.toml\napi_profile: provider.profile\nsynthesis_model:\n  api_key: \"\"\nroles:\n  synthesis:\n    model_name: test-model\n",
+        encoding="utf-8",
+    )
+
+    resolved = load_synthesis_config(config)
+
+    assert resolved["api_url"] == "https://example.test/v1"
+    assert resolved["api_key"] == "secret"
+    assert resolved["model_name"] == "test-model"
