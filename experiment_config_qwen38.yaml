@@ -1,0 +1,8 @@
+api_config: api_config.toml
+protocol: cot
+stage: all
+datasets: [EmoBench, FanToM, HiToM, SoMBench, ToMBench]
+max_samples: 0
+normalized_datasets_path: ../ToMTestDatasets
+results_path: results/qwen38/full
+figures_path: figures/qwen38/full

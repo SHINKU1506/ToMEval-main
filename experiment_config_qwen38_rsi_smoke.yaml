@@ -1,0 +1,16 @@
+llm:
+  backend: vllm
+  model_name: qwen3.8-flash-next
+  model_path: /fs2/tianfeng/models/Qwen3.8-Flash-Next
+  tensor_parallel_size: 8
+  max_model_len: 36864
+  max_num_seqs: 4
+  gpu_memory_utilization: 0.90
+  limit_mm_per_prompt: {image: 0, video: 0}
+protocol: cot
+stage: predict
+datasets: [SoMBench]
+max_samples: 12
+normalized_datasets_path: ../ToMTestDatasets
+results_path: /evaluation-output/results
+logs_path: /evaluation-output/logs

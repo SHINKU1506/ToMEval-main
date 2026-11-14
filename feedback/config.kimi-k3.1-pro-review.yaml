@@ -1,0 +1,110 @@
+# 本机全量 API 合成配置。
+# 连接信息从 ../api_config.toml 的现有本地 profile 继承，不在此文件保存 key。
+
+stage: all
+max_bad_cases: 0
+
+api_config: ../api_config.toml
+api_profile: sombench.judge1
+
+synthesis_model:
+  model_name: kimi-k3.1-pro
+  api_url: ""
+  api_key: ""
+  temperature: 0.6
+  presence_penalty: 0
+  max_tokens: 32768
+  max_workers: 16
+  enable_thinking: false
+  system_prompt: ""
+  request_interval_seconds: 1
+
+roles:
+  diagnosis:
+    api_profile: sombench.judge1
+    model_name: gpt-6-astra
+    max_workers: 4
+    max_tokens: 32768
+    temperature: 0.6
+    presence_penalty: 0
+    enable_thinking: false
+  synthesis:
+    api_profile: sombench.judge1
+    model_name: kimi-k3.1-pro
+    max_workers: 8
+    max_tokens: 32768
+    temperature: 0.6
+    presence_penalty: 0
+    enable_thinking: false
+  repair:
+    api_profile: sombench.judge1
+    model_name: kimi-k3.1-pro
+    max_workers: 8
+    max_tokens: 8192
+    temperature: 0.3
+    presence_penalty: 0
+    enable_thinking: false
+  blind_answer:
+    api_profile: sombench.judge1
+    model_name: gpt-6-astra
+    max_workers: 4
+    max_tokens: 8192
+    temperature: 0.2
+    presence_penalty: 0
+    enable_thinking: false
+  adjudication:
+    api_profile: sombench.judge2
+    model_name: claude-opus-5-5
+    max_workers: 4
+    max_tokens: 8192
+    temperature: 0.2
+    presence_penalty: 0
+    enable_thinking: false
+
+output_path: ../output/tomeval-sft-final-20261111-01/feedback_output
+predictions_root: ../output/tomeval-sft-final-20261111-01/feedback_inputs/results
+
+leakage_guard:
+  test_root: ../ToMTestDatasets
+  threshold: 0.6
+  internal_threshold: 0.85
+  num_perm: 128
+  ngram: 4
+
+synthesis:
+  max_retries_per_diagnosis: 3
+  bad_cases_per_report: 1
+  diagnosis_batch_size: 10
+  synthesis_batch_size: 20
+
+synthesis_datasets:
+  - name: EmoBench
+    target_samples: 200
+    samples_per_report: 5
+    models:
+      - name: qwen3.8-flash-next-sft-final
+        exp: 20261111-01
+  - name: FanToM
+    target_samples: 200
+    samples_per_report: 5
+    models:
+      - name: qwen3.8-flash-next-sft-final
+        exp: 20261111-01
+  - name: HiToM
+    target_samples: 200
+    samples_per_report: 5
+    models:
+      - name: qwen3.8-flash-next-sft-final
+        exp: 20261111-01
+  - name: SoMBench
+    target_samples: 400
+    samples_per_report: 5
+    models:
+      - name: qwen3.8-flash-next-sft-final
+        exp: 20261111-01
+  - name: ToMBench
+    target_samples: 400
+    samples_per_report: 5
+    models:
+      - name: qwen3.8-flash-next-sft-final
+        exp: 20261111-01

@@ -1,0 +1,8 @@
+api_config: api_config.toml
+protocol: cot
+stage: all
+datasets: [SoMBench]
+max_samples: 12
+normalized_datasets_path: ../ToMTestDatasets
+results_path: results/qwen38/smoke
+figures_path: figures/qwen38/smoke

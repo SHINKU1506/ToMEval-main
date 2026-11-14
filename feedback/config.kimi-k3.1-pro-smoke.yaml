@@ -1,0 +1,44 @@
+# 本机 Kimi K3.1 Pro 小规模端到端测试配置。
+# 原 GPT-6 Astra / Opus 5.5 评测配置保持在 api_config.toml，不在此处改写。
+
+stage: all
+max_bad_cases: 20
+
+api_config: ../api_config.toml
+api_profile: sombench.judge1
+
+synthesis_model:
+  model_name: kimi-k3.1-pro
+  api_url: ""
+  api_key: ""
+  temperature: 0.6
+  presence_penalty: 0
+  max_tokens: 32768
+  max_workers: 4
+  enable_thinking: false
+  system_prompt: ""
+  request_interval_seconds: 1
+
+output_path: ../output/tomeval-sft-final-20261111-01/feedback_smoke_kimi
+predictions_root: ../output/tomeval-sft-final-20261111-01/feedback_inputs/results
+
+leakage_guard:
+  test_root: ../ToMTestDatasets
+  threshold: 0.6
+  internal_threshold: 0.85
+  num_perm: 128
+  ngram: 4
+
+synthesis:
+  max_retries_per_diagnosis: 2
+  bad_cases_per_report: 1
+  diagnosis_batch_size: 5
+  synthesis_batch_size: 5
+
+synthesis_datasets:
+  - name: ToMBench
+    target_samples: 5
+    samples_per_report: 1
+    models:
+      - name: qwen3.8-flash-next-sft-final
+        exp: 20261111-01

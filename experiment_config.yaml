@@ -1,0 +1,43 @@
+llm:
+  model_name: <your-model-name>        
+  api_key: <your-api-key>              
+  api_url: <your-api-base-url>   
+  max_workers: 16  # 降低并发，避免服务器过载
+
+# 评测协议:采样参数(temperature/max_tokens/enable_thinking/top_p)、system prompt、extractor、
+# repeats(= 协议的 n_samples)全部由协议驱动,llm 段只保留连接相关参数。
+# 可选值:direct | direct_think | cot | del_tom
+protocol: cot
+
+# 评测阶段:
+#   predict   只生成预测
+#   metric    只判分聚合(复用最新 exp 目录)
+#   visualize 只按 metrics.json 出图到 figures/<数据集>/<模型>/(复用最新 exp 目录)
+#   all       预测 + 判分 + 出图(端到端)
+stage: all
+
+datasets:
+  - Belief_R
+  - BigToM
+  - EmoBench
+  - ExploreToM
+  - FanToM
+  - FictionalQA
+  - HellaSwag
+  - HiToM
+  - PUB
+  - SimpleToM
+  - SocialBench
+  - SocialIQA
+  - SoMBench
+  - TactfulToM
+  - ToMBench
+  - ToMChallenges
+  - ToMQA
+  - ToMato
+  - ToMi
+
+max_samples: 40
+normalized_datasets_path: datasets
+results_path: results          # 预测/判分结果根目录:results/<数据集>/<模型>/exp_<时间戳>/
+figures_path: figures          # visualize 阶段出图根目录:figures/<数据集>/<模型>/
