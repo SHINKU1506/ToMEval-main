@@ -179,7 +179,7 @@ class BigToMSynthesisOutput(BaseModel):
 # ---- EmoBench ----
 class EmoBenchQuestionFlat(BaseModel):
     story_full: str = Field(description="Full story describing an emotional situation")
-    question: str = Field(description="Question about the cause or reaction to an emotion")
+    question: str = Field(description="Question about emotion, cause, reaction, or action")
     correct_answer: str = Field(
         description="Correct emotion answer (exact text that will appear as an option)"
     )
@@ -208,14 +208,21 @@ class EmoBenchQuestionFlat(BaseModel):
         description="Specific emotion name, e.g. 'excitement', 'grief', 'frustration'"
     )
     meta_dimension: str = Field(
-        description="Measured dimension, e.g. 'emotion_attribution'"
+        description="Measured dimension, e.g. 'emotion_recognition', 'emotion_cause', or 'Action'"
     )
+    meta_subset: str = Field(default="emotional_understanding", description="EmoBench subset: emotional_understanding or emotional_application")
+    meta_language: str = Field(default="en", description="Language code: en or zh")
+    meta_choice_texts: List[str] = Field(default_factory=list, description="All answer choices, including the correct choice")
+    meta_paired_group_id: str = Field(default="", description="Shared EU pair identifier; empty for standalone EA questions")
 
     def to_storage_dict(self, synthesis_diagnosis=None) -> dict:
         wrong_answers = [self.wrong_answer_1, self.wrong_answer_2]
         for w in [self.wrong_answer_3, self.wrong_answer_4, self.wrong_answer_5]:
             if w.strip():
                 wrong_answers.append(w)
+        choice_texts = [str(x).strip() for x in self.meta_choice_texts if str(x).strip()]
+        if not choice_texts:
+            choice_texts = [self.correct_answer] + wrong_answers
         return {
             "story": self.story_full,
             "question": self.question,
@@ -226,12 +233,82 @@ class EmoBenchQuestionFlat(BaseModel):
             "meta": {
                 "id": self.meta_id,
                 "condition_type": "",
+                "subset": self.meta_subset,
+                "language": self.meta_language,
+                "question_subtype": self.meta_question_subtype,
+                "coarse_category": self.meta_coarse_category,
+                "finegrained_category": self.meta_finegrained_category,
                 "dimension": [self.meta_dimension],
+                "choice_texts": choice_texts,
+                "paired_group_id": self.meta_paired_group_id or self.meta_id,
             },
         }
 
 class EmoBenchSynthesisOutput(BaseModel):
     questions: List[EmoBenchQuestionFlat]
+
+
+class EmoBenchGroupedQuestionFlat(BaseModel):
+    """One EU generation containing the emotion and cause subquestions."""
+
+    story_full: str
+    emotion_question: str
+    emotion_correct_answer: str
+    emotion_wrong_answers: List[str] = Field(min_length=2, max_length=5)
+    cause_question: str
+    cause_correct_answer: str
+    cause_wrong_answers: List[str] = Field(min_length=2, max_length=5)
+    meta_id: str
+    meta_coarse_category: str = ""
+    meta_finegrained_category: str = ""
+    meta_dimension: str = "emotion_recognition"
+    meta_language: str = "en"
+    meta_paired_group_id: str = ""
+
+    def to_storage_rows(self) -> List[dict]:
+        group_id = self.meta_paired_group_id or self.meta_id
+        common = {
+            "subset": "emotional_understanding",
+            "language": self.meta_language,
+            "coarse_category": self.meta_coarse_category,
+            "finegrained_category": self.meta_finegrained_category,
+            "paired_group_id": group_id,
+        }
+        emotion = {
+            "story": self.story_full,
+            "question": self.emotion_question,
+            "answer": {
+                "correct_answers": [self.emotion_correct_answer],
+                "wrong_answers": list(self.emotion_wrong_answers),
+            },
+            "meta": {
+                **common,
+                "id": f"{group_id}_emotion",
+                "question_subtype": "emotion",
+                "dimension": ["emotional_understanding", "emotion_recognition", self.meta_coarse_category, self.meta_finegrained_category],
+                "choice_texts": [self.emotion_correct_answer] + list(self.emotion_wrong_answers),
+            },
+        }
+        cause = {
+            "story": self.story_full,
+            "question": self.cause_question,
+            "answer": {
+                "correct_answers": [self.cause_correct_answer],
+                "wrong_answers": list(self.cause_wrong_answers),
+            },
+            "meta": {
+                **common,
+                "id": f"{group_id}_cause",
+                "question_subtype": "cause",
+                "dimension": ["emotional_understanding", "emotion_cause", self.meta_coarse_category, self.meta_finegrained_category],
+                "choice_texts": [self.cause_correct_answer] + list(self.cause_wrong_answers),
+            },
+        }
+        return [emotion, cause]
+
+
+class EmoBenchGroupedSynthesisOutput(BaseModel):
+    questions: List[EmoBenchGroupedQuestionFlat]
 
 
 # ---- FanToM ----
@@ -522,6 +599,7 @@ SYNTHESIS_SCHEMA_REGISTRY: Dict[str, Any] = {
     "SocialIQA": SocialIQASynthesisOutput,
     "BigToM": BigToMSynthesisOutput,
     "EmoBench": EmoBenchSynthesisOutput,
+    "EmoBenchGrouped": EmoBenchGroupedSynthesisOutput,
     "FanToM": FanToMSynthesisOutput,
     "HiToM": HiToMSynthesisOutput,
 }
@@ -568,6 +646,11 @@ def synthesize_from_reports(
     def _schema_for_report(r_idx: int):
         """SoMBench 按 report 的 qtype 选 schema；其余数据集恒用 output_schema。
         用 _meta.dimension（stage2 程序化写入、权威），避免读 LLM 回显的顶层 dimension。"""
+        if dataset_name == "EmoBench":
+            key = str((reports[r_idx].get("_meta") or {}).get("dimension") or reports[r_idx].get("dimension", ""))
+            if key.startswith("EU__"):
+                return EmoBenchGroupedSynthesisOutput
+            return EmoBenchSynthesisOutput
         if dataset_name != "SoMBench":
             return output_schema
         rep = reports[r_idx]
@@ -644,25 +727,25 @@ def synthesize_from_reports(
                 r = resp.content if resp else None
                 if r is not None and hasattr(r, 'questions') and r.questions:
                     q = r.questions[0]
-                    if hasattr(q, "to_storage_dict"):
-                        q_dict = q.to_storage_dict()
+                    if hasattr(q, "to_storage_rows"):
+                        q_rows = q.to_storage_rows()
+                    elif hasattr(q, "to_storage_dict"):
+                        q_rows = [q.to_storage_dict()]
                     else:
-                        q_dict = q if isinstance(q, dict) else dict(q)
+                        q_rows = [q if isinstance(q, dict) else dict(q)]
+                    for row_idx, q_dict in enumerate(q_rows):
                         q_dict.setdefault("meta", {})
-
-                    meta = q_dict.get("meta", {})
-                    if isinstance(meta, dict):
-                        meta["id"] = f"synthetic_{dataset_name.lower()}_{r_idx:03d}_{s_idx}"
-                        meta.setdefault("history", [])
-                        # 写入语言标记，保证中文合成样本回流 eval/filter 时
-                        # 能被 get_sample_lang 识别并走中文路径。
-                        meta["lang"] = str((reports[r_idx].get("_meta") or {}).get("lang") or "en")
-
-                    results[pair] = q_dict
-                    batch_new.append(q_dict)
+                        meta = q_dict.get("meta", {})
+                        if isinstance(meta, dict):
+                            subtype = str(meta.get("question_subtype") or row_idx)
+                            meta["id"] = f"synthetic_{dataset_name.lower()}_{r_idx:03d}_{s_idx}_{subtype}"
+                            meta.setdefault("history", [])
+                            meta["lang"] = str((reports[r_idx].get("_meta") or {}).get("lang") or "en")
+                    results[pair] = q_rows
+                    batch_new.extend(q_rows)
                     success_this_round += 1
                 else:
-                    last_failed[pair] = {}
+                    last_failed[pair] = {"_failure_reason": "structured_output_failed"}
 
             if output_file is not None and batch_new:
                 output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -674,7 +757,7 @@ def synthesize_from_reports(
         logger.info(f"  Round {round_idx + 1}: {success_this_round}/{len(pending_pairs)} generated")
         pending_pairs = [p for p in pending_pairs if p not in results]
 
-    final_results = list(results.values())
+    final_results = [row for rows in results.values() for row in rows]
     stats = {
         "total_reports": len(reports),
         "total_target": total_target,

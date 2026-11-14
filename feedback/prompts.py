@@ -117,14 +117,15 @@ SYNTHESIS_FORMAT_REGISTRY: Dict[str, Dict[str, Any]] = {
         "schema": "OpenAnswer",
         "meta_ability_field": "coarse_category",
         "meta_required_fields": ["id", "subset", "language", "question_subtype", "coarse_category", "finegrained_category", "dimension", "choice_texts"],
-        "description": "Emotion reasoning. Story is dict with full_story. Answer uses text match (not letter). Correct_Answer is the exact emotion text. Provide 2-5 wrong emotion options (wrong_answer_1 through wrong_answer_5); leave unused slots as empty string.",
+        "description": "EmoBench single question. Story is plain text. Correct_Answer and wrong answers are full answer texts; provide all choices in meta_choice_texts. For emotional_application, choices are actions or responses, not emotion words.",
         "complexity_hint": (
             "Story: 2-5 sentences (50-200 words), 1-2 agents. "
             "Describes a situation with a clear emotional trigger (goal blocked/achieved, social event, loss/gain). "
-            "Question: asks what emotion the agent feels (cause/reaction/desire). "
+            "Question: asks about an emotion, its cause, or an appropriate action/response. "
             "Style: natural emotional narrative. "
-            "Correct answer and wrong answers are ALL single emotion words (e.g. 'joy', 'embarrassment', 'relief'). "
-            "Wrong answers must be emotions that are plausible but incorrect given the specific situation."
+            "For emotional_understanding, emotion questions use emotion labels and cause questions use complete causal statements. "
+            "For emotional_application, choices are complete actions or responses. "
+            "Wrong answers must be plausible but incorrect given the specific situation."
         ),
         "json_skeleton": {
             "questions": [{
@@ -138,11 +139,37 @@ SYNTHESIS_FORMAT_REGISTRY: Dict[str, Dict[str, Any]] = {
                 "wrong_answer_5": "<wrong emotion 5 or empty string>",
                 "meta_id": "synthetic_0001",
                 "meta_question_subtype": "cause",
+                "meta_subset": "emotional_understanding",
                 "meta_coarse_category": "<emotion category>",
                 "meta_finegrained_category": "<specific emotion>",
                 "meta_dimension": "emotion_attribution",
+                "meta_choice_texts": ["<correct choice>", "<wrong choice 1>", "<wrong choice 2>"],
             }]
         },
+    },
+    "EmoBenchGrouped": {
+        "story_structure": "string",
+        "options_in_question": False,
+        "n_correct": 2,
+        "n_wrong": "grouped",
+        "answer_key": "Correct_Answer",
+        "schema": "EmoBenchGrouped",
+        "description": "EmoBench emotional_understanding EU pair: generate one emotion subquestion and one cause subquestion over the same story. Each subquestion has its own correct answer and distractors.",
+        "complexity_hint": "Generate two linked questions. The cause answer must explain the emotion selected by the emotion subquestion. Keep the two option sets separate and plausible.",
+        "json_skeleton": {"questions": [{
+            "story_full": "<story>",
+            "emotion_question": "<emotion question>",
+            "emotion_correct_answer": "<emotion>",
+            "emotion_wrong_answers": ["<wrong emotion 1>", "<wrong emotion 2>", "<wrong emotion 3>", "<wrong emotion 4>", "<wrong emotion 5>"],
+            "cause_question": "<cause question>",
+            "cause_correct_answer": "<cause statement>",
+            "cause_wrong_answers": ["<wrong cause 1>", "<wrong cause 2>", "<wrong cause 3>"],
+            "meta_id": "synthetic_0001",
+            "meta_coarse_category": "<emotion category>",
+            "meta_finegrained_category": "<specific emotion>",
+            "meta_dimension": "emotion_recognition",
+            "meta_language": "en"
+        }]}
     },
     "FanToM": {
         "story_structure": "dict_full_story",
@@ -674,6 +701,10 @@ def build_stage2_generation_from_report_prompt(
         fmt = SOMBENCH_FORMAT_BY_QTYPE.get(sm_qtype, SOMBENCH_FORMAT_BY_QTYPE["Q1"])
     else:
         fmt = SYNTHESIS_FORMAT_REGISTRY.get(dataset_name)
+        if dataset_name == "EmoBench":
+            _emobench_key = str((report.get("_meta") or {}).get("dimension") or report.get("dimension", ""))
+            if _emobench_key.startswith("EU__"):
+                fmt = SYNTHESIS_FORMAT_REGISTRY["EmoBenchGrouped"]
         if fmt is None:
             fmt = SYNTHESIS_FORMAT_REGISTRY["SocialIQA"]
 
@@ -690,7 +721,9 @@ def build_stage2_generation_from_report_prompt(
     if n_wrong == 0:
         format_specific_rules = "This is open-ended — do NOT include Wrong_Answer field."
     elif n_wrong == "variable":
-        format_specific_rules = "Put all answer options (including correct) in Meta.choice_texts. Correct_Answer must exactly match one of the choice_texts values."
+        format_specific_rules = "Put all answer options (including correct) in meta_choice_texts. Correct_Answer must exactly match one of the choice_texts values. Do not assume the choices are single emotion words."
+    elif n_wrong == "grouped":
+        format_specific_rules = "Generate both linked EU subquestions. Keep separate answer lists for emotion and cause, and make the cause answer explain the emotion answer."
     elif n_wrong is None:
         format_specific_rules = "Embed all answer options (A/B/C/D) inside the Question text."
     else:

@@ -438,7 +438,14 @@ def get_dimension_key(meta: Any, dataset_name: str) -> str:
             return str(dim[0]) if dim else "unknown"
         return str(dim) if dim else "unknown"
 
-    elif dataset_name in ("SocialIQA", "EmoBench"):
+    elif dataset_name == "EmoBench":
+        subset = str(meta.get("subset", "")).strip()
+        mode = "EU" if subset == "emotional_understanding" else "EA" if subset == "emotional_application" else "OTHER"
+        dim = meta.get("dimension", meta.get("Dimension", ["unknown"]))
+        dim_value = str(dim[0]) if isinstance(dim, list) and dim else str(dim)
+        return f"{mode}__{dim_value}{suffix}"
+
+    elif dataset_name == "SocialIQA":
         dim = meta.get("dimension", meta.get("Dimension", ["unknown"]))
         if isinstance(dim, list):
             return (str(dim[0]) if dim else "unknown") + suffix
