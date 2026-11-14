@@ -690,6 +690,7 @@ def synthesize_from_reports(
                 target_count=1,
                 previous_question=last_failed.get((r_idx, s_idx)) if round_idx > 0 else None,
                 lang=str((reports[r_idx].get("_meta") or {}).get("lang") or "en"),
+                variant_index=s_idx,
             ) + f"\n\nThis is variant {s_idx + 1} for the same diagnosis. Use a distinct scenario, names, and surface structure from the other variants."
             for (r_idx, s_idx) in pending_pairs
         ]

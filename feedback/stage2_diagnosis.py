@@ -265,6 +265,7 @@ def allocate_sombench_reports_by_qtype(
     dim_counts: Dict[str, int],
     total_reports: int,
     dim_totals: Optional[Dict[str, int]] = None,
+    qtype_shares: Optional[Dict[str, float]] = None,
 ) -> Dict[str, int]:
     """Allocate SoMBench reports by qtype before allocating dimensions.
 
@@ -286,9 +287,20 @@ def allocate_sombench_reports_by_qtype(
     if len(qtypes) > total_reports:
         qtypes = sorted(qtypes, key=lambda q: -sum(by_qtype[q].values()))[:total_reports]
 
-    base, remainder = divmod(total_reports, len(qtypes))
-    qtype_quota = {q: base for q in qtypes}
-    for q in qtypes[:remainder]:
+    shares = qtype_shares or {"Q1": 0.3, "Q2": 0.3, "Q3": 0.3, "Q4": 0.1}
+    active_shares = {q: float(shares.get(q, 0.0)) for q in qtypes}
+    total_share = sum(active_shares.values()) or float(len(qtypes))
+    raw_quota = {q: total_reports * active_shares.get(q, 1.0) / total_share for q in qtypes}
+    qtype_quota = {q: max(1, int(raw_quota[q])) for q in qtypes}
+    while sum(qtype_quota.values()) > total_reports:
+        candidates = [q for q in qtypes if qtype_quota[q] > 1]
+        if not candidates:
+            break
+        q = min(candidates, key=lambda item: raw_quota[item] - qtype_quota[item])
+        qtype_quota[q] -= 1
+    for q in sorted(qtypes, key=lambda item: raw_quota[item] - int(raw_quota[item]), reverse=True):
+        if sum(qtype_quota.values()) >= total_reports:
+            break
         qtype_quota[q] += 1
 
     result: Dict[str, int] = {}

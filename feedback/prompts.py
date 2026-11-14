@@ -680,6 +680,7 @@ def build_stage2_generation_from_report_prompt(
     target_count: int = 1,
     previous_question: Optional[Dict[str, Any]] = None,
     lang: str = "en",
+    variant_index: int = 0,
 ) -> str:
     """构建从维度诊断报告合成新样本的 prompt
 
@@ -799,6 +800,14 @@ def build_stage2_generation_from_report_prompt(
         "recommended_synthesis_themes": synthesis_themes,
         "difficulty_distribution": difficulty_distribution,
     }, indent=2, ensure_ascii=False)
+
+    if dataset_name == "SoMBench" and sm_qtype == "Q3":
+        verdict = ("是", "否", "无法确定")[variant_index % 3]
+        skeleton = json.loads(json.dumps(fmt["json_skeleton"], ensure_ascii=False))
+        skeleton["questions"][0]["correct_verdict"] = verdict
+        fmt = dict(fmt)
+        fmt["json_skeleton"] = skeleton
+        format_specific_rules += f" 本变体必须构造证据支持的正确判定：{verdict}。不要把示例值当作固定答案。"
 
     return STAGE2_GENERATION_FROM_REPORT_PROMPT.format(
         format_description=fmt["description"],
