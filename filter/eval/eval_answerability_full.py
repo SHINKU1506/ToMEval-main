@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 _VALID_LABELS = {"answerable", "label_error", "ambiguous", "contradictory_premise", "missing_info"}
 
 
-def _build_prompt(row: Any) -> str:
+def _build_prompt(row: Any, dataset: str = "") -> str:
     answer = row.get("answer")
     if not isinstance(answer, dict):
         answer = {"correct_answers": [], "wrong_answers": []}
@@ -45,11 +45,28 @@ def _build_prompt(row: Any) -> str:
         if get_sample_lang(row.get("meta")) == "zh"
         else ANSWERABILITY_FULL_PROMPT
     )
+    meta = row.get("meta") if isinstance(row.get("meta"), dict) else {}
+    prompt_type = meta.get("prompt_type_override") or ("mcq_multi" if len(ca or []) > 1 else "")
+    question = str(row.get("question", "") or "")
+    correct_text = stringify_answer_list(ca if ca is not None else [])
+    wrong_text = stringify_answer_list(wa if wa is not None else [])
+    if prompt_type == "mcq_grouped" or meta.get("sub_questions"):
+        grouped = []
+        for index, sub in enumerate(meta.get("sub_questions") or [], start=1):
+            options = list((sub.get("options") or {}).values())
+            grouped.append("Sub-question %d: %s; choices=%s; correct_labels=%s" % (
+                index, sub.get("question", ""), stringify_answer_list(options), sub.get("correct_letters", [])
+            ))
+        question += "\n" + "\n".join(grouped)
+        correct_text = "Each grouped sub-question must have a unique correct answer."
+        wrong_text = "Grouped question; inspect every sub-question separately."
+    elif prompt_type == "mcq_multi":
+        question += "\nSelect all correct choices; multiple correct answers are allowed."
     return template.format(
         story=str(row.get("story", "") or ""),
-        question=str(row.get("question", "") or ""),
-        correct_answers=stringify_answer_list(ca if ca is not None else []),
-        wrong_answers=stringify_answer_list(wa if wa is not None else []),
+        question=question,
+        correct_answers=correct_text,
+        wrong_answers=wrong_text,
     )
 
 
@@ -94,7 +111,7 @@ def run_answerability_on_df(
     prompts: List[str] = []
     for idx, row in df.iterrows():
         sample_ids.append(resolve_sample_id(row, idx))
-        prompts.append(_build_prompt(row))
+        prompts.append(_build_prompt(row, dataset=dataset))
 
     responses = strong_client.batch_generate(prompts, desc=f"answerability[{dataset}]")
 

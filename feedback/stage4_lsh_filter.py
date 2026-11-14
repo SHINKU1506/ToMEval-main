@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 _KNOWN_TASKS = [
     "BigToM", "EmoBench", "FanToM", "HiToM", "SocialIQA", "ToMBench", "SoMBench"
 ]
-_CACHE_VERSION = 1
+_CACHE_VERSION = 2
 
 
 # ── 文本工具 ──────────────────────────────────────────────────────────────────
@@ -40,7 +40,8 @@ def _build_text(row: dict) -> str:
         all_opts = list(answer.get("correct_answers", []) or []) + list(answer.get("wrong_answers", []) or [])
     else:
         all_opts = []
-    parts = [_normalize(story), _normalize(question)] + [_normalize(o) for o in all_opts]
+    question_view = " ".join([_normalize(question)] * 3 + [_normalize(o) for o in all_opts])
+    parts = [_normalize(story), question_view]
     return " ".join(p for p in parts if p)
 
 
@@ -311,6 +312,17 @@ def save_as_jsonl(rows: List[dict], path: Path) -> None:
     logger.info(f"  Saved {len(rows)} rows to {path}")
 
 
+def _export_filter_input(row_path: Path, dataset: str, export_root: Optional[Path]) -> Optional[Path]:
+    if export_root is None:
+        return None
+    import shutil
+    target = export_root / dataset / "synthetic.parquet"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(row_path, target)
+    logger.info("  Exported filter input: %s", target)
+    return target
+
+
 # ── 主入口 ────────────────────────────────────────────────────────────────────
 
 def run_stage4_lsh_filter(
@@ -352,6 +364,11 @@ def run_stage4_lsh_filter(
     synth_raw_root = output_path / "_intermediate" / "synth_raw"
     synth_clean_root = output_path / "_intermediate" / "synth_clean"
     datasets_root = output_path / "datasets"
+    filter_input_root = config.get("filter_input_root")
+    if filter_input_root:
+        filter_input_root = Path(filter_input_root)
+        if not filter_input_root.is_absolute():
+            filter_input_root = (Path.cwd() / filter_input_root).resolve()
     all_stats: Dict[str, Dict[str, int]] = {}
 
     for ds_info in synthesis_datasets:
@@ -441,6 +458,7 @@ def run_stage4_lsh_filter(
         # 保存最终数据集到显眼位置
         final_path = datasets_root / f"{ds}.parquet"
         save_as_parquet(passed_internal, final_path)
+        _export_filter_input(final_path, ds, filter_input_root)
         logger.info(
             f"  {ds}: final dataset: {len(passed_internal)}/{len(all_candidates)} "
             f"({len(passed_internal)/max(1,len(all_candidates)):.1%}) → {final_path}"

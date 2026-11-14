@@ -20,6 +20,7 @@ synthesis_model:
   request_interval_seconds: 1
 
 output_path: ../output/tomeval-sft-final-20261111-01/feedback_smoke_kimi
+filter_input_root: ../filter_inputs/tomeval-sft-final-20261111-01-smoke
 predictions_root: ../output/tomeval-sft-final-20261111-01/feedback_inputs/results
 
 leakage_guard:

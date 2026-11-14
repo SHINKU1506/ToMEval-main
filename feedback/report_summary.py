@@ -40,20 +40,16 @@ def generate_summary_report(
         )
 
     # 合成样本文件统计
-    # 输出路径：{output_path}/synth_clean/{dataset}/synthetic*.parquet
+    # 输出路径：{output_path}/datasets/{dataset}.parquet
     lines.append("\n## 合成输出文件\n")
-    synth_clean_root = output_path / "synth_clean"
+    datasets_root = output_path / "datasets"
     any_file = False
     for ds in dataset_names:
-        ds_clean_dir = synth_clean_root / ds
-        if not ds_clean_dir.exists():
-            continue
-        parquet_files = sorted(ds_clean_dir.glob("synthetic*.parquet"))
-        if parquet_files:
+        parquet_file = datasets_root / f"{ds}.parquet"
+        if parquet_file.exists():
             any_file = True
             lines.append(f"**{ds}**:")
-            for pf in parquet_files:
-                lines.append(f"  - `{pf}`")
+            lines.append(f"  - `{parquet_file}`")
     if not any_file:
         lines.append("*(暂无合成输出文件)*")
 

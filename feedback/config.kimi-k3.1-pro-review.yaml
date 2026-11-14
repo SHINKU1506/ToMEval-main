@@ -62,6 +62,7 @@ roles:
     enable_thinking: false
 
 output_path: ../output/tomeval-sft-final-20261111-01/feedback_output
+filter_input_root: ../filter_inputs/tomeval-sft-final-20261111-01
 predictions_root: ../output/tomeval-sft-final-20261111-01/feedback_inputs/results
 
 leakage_guard:

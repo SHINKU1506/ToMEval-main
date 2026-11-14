@@ -2,6 +2,8 @@ from feedback.stage1_load_predictions import _extract_letters, _is_correct, get_
 from feedback.stage2_diagnosis import allocate_sombench_reports_by_qtype
 from feedback.stage3_synthesis import EmoBenchGroupedQuestionFlat, EmoBenchQuestionFlat, ToMBenchQuestionFlat
 from feedback.prompts import build_stage2_generation_from_report_prompt
+from feedback.report_summary import generate_summary_report
+from filter.eval.eval_answerability_full import _build_prompt as build_answerability_prompt
 
 
 def test_sombench_report_allocation_preserves_available_qtypes():
@@ -148,3 +150,29 @@ def test_retry_prompt_reports_structured_output_failure():
 
     assert "structured output failed" in prompt.lower()
     assert "too easy" not in prompt.lower()
+
+
+def test_summary_report_uses_final_dataset_path(tmp_path):
+    (tmp_path / "datasets").mkdir()
+    (tmp_path / "datasets" / "SoMBench.parquet").write_bytes(b"placeholder")
+    report = generate_summary_report({"SoMBench": {}}, ["SoMBench"], "all", "model", tmp_path)
+    assert "SoMBench.parquet" in report
+
+
+def test_answerability_prompt_explains_grouped_and_multi_answers():
+    grouped = build_answerability_prompt({
+        "story": "Story",
+        "question": "Grouped",
+        "answer": {"correct_answers": [], "wrong_answers": []},
+        "meta": {
+            "prompt_type_override": "mcq_grouped",
+            "sub_questions": [{"question": "Q1", "options": {"A": "x"}, "correct_letters": ["A"]}],
+        },
+    }, "EmoBench")
+    assert "Sub-question 1" in grouped
+    multi = build_answerability_prompt({
+        "story": "Story", "question": "Choose all",
+        "answer": {"correct_answers": ["x", "y"], "wrong_answers": ["z"]},
+        "meta": {},
+    }, "SoMBench")
+    assert "multiple correct answers" in multi
