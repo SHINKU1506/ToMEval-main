@@ -65,6 +65,22 @@ class DimensionDiagnosisReport(BaseModel):
     difficulty_distribution: Dict[str, float] = Field(
         description="Distribution of difficulties, e.g. {'easy': 0.2, 'medium': 0.5, 'hard': 0.3}"
     )
+    failure_trigger: List[str] = Field(
+        default_factory=list,
+        description="De-identified triggers that caused the model's reasoning failure"
+    )
+    required_distractor_logic: List[str] = Field(
+        default_factory=list,
+        description="Distractor mechanisms that must be represented in new questions"
+    )
+    hard_constraints: List[str] = Field(
+        default_factory=list,
+        description="Structural constraints required for a hard question in this dimension"
+    )
+    difficulty_policy: Literal["weighted", "hard_mix", "hard_only"] = Field(
+        default="weighted",
+        description="Difficulty scheduling policy for synthesis"
+    )
 
 
 _FALLBACK_REPORT = {
@@ -81,6 +97,10 @@ _FALLBACK_REPORT = {
         "social gatherings",
     ],
     "difficulty_distribution": {"easy": 0.2, "medium": 0.5, "hard": 0.3},
+    "failure_trigger": ["The model may have substituted the global state for the target agent's local belief."],
+    "required_distractor_logic": ["Include a global-truth distractor and a distractor representing another agent's belief."],
+    "hard_constraints": ["Include at least one state change that the target agent did not witness."],
+    "difficulty_policy": "hard_mix",
 }
 
 
@@ -112,6 +132,10 @@ def _build_fallback_report(
         "secondary_cognitive_operations": [],
         "recommended_synthesis_themes": [f"{dataset_name} cases matching {dimension}"],
         "difficulty_distribution": {"easy": 0.0, "medium": 0.5, "hard": 0.5},
+        "failure_trigger": ["The model may have substituted the global state for the target agent's local belief."],
+        "required_distractor_logic": ["Include a global-truth distractor and a distractor representing another agent's belief."],
+        "hard_constraints": ["Include at least one state change that the target agent did not witness."],
+        "difficulty_policy": "hard_mix",
         "_is_fallback": True,
         "_fallback_reason": reason,
         "_fallback_case_count": len(bad_cases_batch),

@@ -192,7 +192,10 @@ Output ONLY the JSON object, no additional text or markdown formatting."""
                     raise RuntimeError(
                         "Judge API rate limited; successful scores are cached. Retry after recovery."
                     ) from e
-                logging.warning(f"[StructureClient] create mode attempt {attempt + 1}/{max_retry} failed: {type(e).__name__}")
+                logging.warning(
+                    f"[StructureClient] create mode attempt {attempt + 1}/{max_retry} failed: "
+                    f"{type(e).__name__}: {e}"
+                )
                 continue
 
             if cache_path is not None:

@@ -129,6 +129,8 @@ def run_pipeline(config_path: str):
     bad_cases_per_report = syn_config.get("bad_cases_per_report", 1)
     diagnosis_batch_size = syn_config.get("diagnosis_batch_size", 10)
     synthesis_batch_size = syn_config.get("synthesis_batch_size", 20)
+    target_difficulty = str(syn_config.get("target_difficulty", ""))
+    difficulty_weights = syn_config.get("difficulty_weights")
     predictions_root = config.get("predictions_root", "results")
 
     all_stats = {}
@@ -256,6 +258,8 @@ def run_pipeline(config_path: str):
                     output_dir=str(output_path / "_intermediate" / "synth_raw"),
                     model_name=model_name,
                     batch_size=synthesis_batch_size,
+                    target_difficulty=target_difficulty,
+                    difficulty_weights=difficulty_weights,
                 )
                 if out_path:
                     with open(out_path, encoding="utf-8") as f:

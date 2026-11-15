@@ -26,7 +26,11 @@ SYNTHESIS_FORMAT_REGISTRY: Dict[str, Dict[str, Any]] = {
         "meta_required_fields": ["ability", "id", "lang", "qa_index"],
         "description": "4-choice MCQ where options are embedded in the Question text. Answer is a single letter (A/B/C/D).",
         "complexity_hint": (
-            "Story: 2-4 sentences (100-400 words), 2-4 named agents, everyday social scenario. "
+            "Story: medium uses 3-6 sentences; hard uses 5-8 sentences (100-500 words), "
+            "at least 3 named agents, and an everyday social scenario. Hard stories must include "
+            "at least two information updates, one agent absent from a key state change, explicit "
+            "who-saw-what boundaries, one true but answer-irrelevant red herring, and one distractor "
+            "for a shallow or omniscient shortcut. "
             "Covers: false beliefs, intentions, non-literal communication (faux pas/irony/white lies), second-order beliefs. "
             "Style: natural English prose, use Western-style names. "
             "Question: asks about one agent's mental state, belief, or intention."
@@ -442,6 +446,9 @@ A language model failed on the following {K} questions from the **{dimension}** 
 2. Describe COGNITIVE OPERATIONS and structural patterns, not surface features
 3. recommended_synthesis_themes: general story settings or contexts (NOT specific question content)
 4. difficulty_distribution values must sum to 1.0
+5. failure_trigger must describe the de-identified reasoning trap, not copy the source question
+6. required_distractor_logic must state which shortcut each important distractor should trigger
+7. hard_constraints must list structural constraints for a hard variant
 
 cognitive_operation options (choose the most specific match):
   belief_state_update    — failed to update an agent's belief after an unwitnessed event
@@ -463,7 +470,11 @@ Return ONLY the JSON (no markdown):
   "primary_cognitive_operation": "<one of the 11 options above>",
   "secondary_cognitive_operations": ["<optional secondary op>", ...],
   "recommended_synthesis_themes": ["<story theme/setting 1>", "<story theme/setting 2>", "<story theme/setting 3>"],
-  "difficulty_distribution": {{"easy": 0.2, "medium": 0.5, "hard": 0.3}}
+  "difficulty_distribution": {{"easy": 0.2, "medium": 0.5, "hard": 0.3}},
+  "failure_trigger": ["<de-identified reasoning trap>"],
+  "required_distractor_logic": ["<required shortcut distractor>"],
+  "hard_constraints": ["<structural hard-question constraint>"],
+  "difficulty_policy": "weighted"
 }}"""
 
 
@@ -582,9 +593,12 @@ _DIFFICULTY_RULES: Dict[str, str] = {
     ),
     "hard": (
         "Hard difficulty rules:\n"
-        "- Story: 3+ agents with overlapping but distinct knowledge states\n"
-        "- Multiple sequential events where only some agents are present\n"
-        "- At least one deliberate misdirection: surface-level clues point toward a wrong answer\n"
+        "- Story: 5-8 sentences, at least 3 agents, with overlapping but distinct knowledge states\n"
+        "- Include at least two sequential information updates where only some agents are present\n"
+        "- State explicitly who witnessed each key change and who only received a partial report\n"
+        "- Include one true but answer-irrelevant red herring, not random filler\n"
+        "- The question must target one primary cognitive operation and one precise time point\n"
+        "- At least three hard constraints must be satisfied: information boundary, red herring, and shortcut distractor\n"
         "- Wrong options: at least one matches the REAL-WORLD truth (trapping agents who ignore perspective), "
         "at least one matches what a different agent would believe"
     ),
@@ -609,6 +623,15 @@ The new question MUST target the following cognitive weakness:
 
 **Common Error Patterns (cross-case analysis)**:
 {common_error_patterns}
+
+**Failure Trigger (de-identified)**:
+{failure_trigger}
+
+**Required Distractor Logic**:
+{required_distractor_logic}
+
+**Hard Constraints**:
+{hard_constraints}
 
 **Recommended Story Themes/Contexts**:
 {synthesis_themes}
@@ -681,6 +704,8 @@ def build_stage2_generation_from_report_prompt(
     previous_question: Optional[Dict[str, Any]] = None,
     lang: str = "en",
     variant_index: int = 0,
+    target_difficulty: str = "",
+    difficulty_weights: Optional[Dict[str, float]] = None,
 ) -> str:
     """构建从维度诊断报告合成新样本的 prompt
 
@@ -711,12 +736,27 @@ def build_stage2_generation_from_report_prompt(
         if fmt is None:
             fmt = SYNTHESIS_FORMAT_REGISTRY["SocialIQA"]
 
-    # 从 difficulty_distribution 中选最高概率的难度
+    # Difficulty is scheduled explicitly. The old max(distribution) behavior
+    # made every variant inherit the modal label and often produced easy data.
     difficulty_distribution = report.get("difficulty_distribution", {})
-    if difficulty_distribution:
-        difficulty = max(difficulty_distribution, key=lambda k: difficulty_distribution.get(k, 0))
+    policy = str(report.get("difficulty_policy") or "weighted")
+    weights = difficulty_weights or {"hard": 0.70, "medium": 0.25, "easy": 0.05}
+    if target_difficulty == "hard":
+        difficulty = "hard"
+    elif target_difficulty == "hard_mix":
+        schedule = (["hard"] * 14) + (["medium"] * 5) + ["easy"]
+        difficulty = schedule[variant_index % len(schedule)]
+    elif policy == "hard_only":
+        difficulty = "hard"
+    elif policy == "hard_mix":
+        schedule = (["hard"] * 14) + (["medium"] * 5) + ["easy"]
+        difficulty = schedule[variant_index % len(schedule)]
     else:
-        difficulty = "medium"
+        selected = difficulty_distribution or weights
+        schedule = []
+        for label in ("hard", "medium", "easy"):
+            schedule.extend([label] * max(0, round(float(selected.get(label, 0.0)) * 20)))
+        difficulty = schedule[variant_index % len(schedule)] if schedule else "medium"
 
     primary_op = str(report.get("primary_cognitive_operation", "belief_state_update"))
 
@@ -799,6 +839,10 @@ def build_stage2_generation_from_report_prompt(
         "secondary_cognitive_operations": report.get("secondary_cognitive_operations", []),
         "recommended_synthesis_themes": synthesis_themes,
         "difficulty_distribution": difficulty_distribution,
+        "failure_trigger": report.get("failure_trigger", []),
+        "required_distractor_logic": report.get("required_distractor_logic", []),
+        "hard_constraints": report.get("hard_constraints", []),
+        "difficulty_policy": policy,
     }, indent=2, ensure_ascii=False)
 
     if dataset_name == "SoMBench" and sm_qtype == "Q3":
@@ -816,6 +860,9 @@ def build_stage2_generation_from_report_prompt(
         report_summary=report_summary,
         primary_cognitive_operation=primary_op,
         common_error_patterns="\n".join(f"- {p}" for p in common_patterns) or "- failed to perform required cognitive operation",
+        failure_trigger="\n".join(f"- {p}" for p in report.get("failure_trigger", [])) or "- preserve the diagnosed reasoning trap",
+        required_distractor_logic="\n".join(f"- {p}" for p in report.get("required_distractor_logic", [])) or "- include a distractor for the diagnosed shortcut",
+        hard_constraints="\n".join(f"- {p}" for p in report.get("hard_constraints", [])) or "- include at least one information-boundary constraint",
         synthesis_themes="\n".join(f"- {t}" for t in synthesis_themes) or "- everyday social scenarios",
         difficulty=difficulty,
         format_specific_rules=format_specific_rules,

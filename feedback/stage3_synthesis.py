@@ -59,6 +59,19 @@ def _strip_embedded_options(q_text: str) -> str:
     return q_text[: match.start()].rstrip()
 
 
+def _parse_existing_pair_id(meta_id: str) -> Optional[Tuple[int, int]]:
+    """Extract the report/sample pair from a generated question ID.
+
+    Dataset-specific question types may add a final suffix, for example
+    synthetic_tombench_000_0_0. The report and sample indices remain the two
+    numeric components immediately before that optional suffix.
+    """
+    match = re.fullmatch(r"synthetic_.+?_(\d+)_(\d+)(?:_[^_]+)?", str(meta_id or ""))
+    if not match:
+        return None
+    return int(match.group(1)), int(match.group(2))
+
+
 # ============ 数据合成Schema ============
 
 # ---- ToMBench ----
@@ -620,6 +633,8 @@ def synthesize_from_reports(
     existing_pairs: Optional[set] = None,
     batch_size: int = 10,
     output_file: Optional[Path] = None,
+    target_difficulty: str = "",
+    difficulty_weights: Optional[Dict[str, float]] = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """从维度级诊断报告合成新样本，每份报告生成 samples_per_report 条题目。
 
@@ -691,6 +706,8 @@ def synthesize_from_reports(
                 previous_question=last_failed.get((r_idx, s_idx)) if round_idx > 0 else None,
                 lang=str((reports[r_idx].get("_meta") or {}).get("lang") or "en"),
                 variant_index=s_idx,
+                target_difficulty=target_difficulty,
+                difficulty_weights=difficulty_weights,
             ) + f"\n\nThis is variant {s_idx + 1} for the same diagnosis. Use a distinct scenario, names, and surface structure from the other variants."
             for (r_idx, s_idx) in pending_pairs
         ]
@@ -711,6 +728,7 @@ def synthesize_from_reports(
                 for schema, idxs in groups.items():
                     sub = client.batch_generate_structure(
                         [batch_prompts[i] for i in idxs], schema,
+                        mode="create",
                         desc=f"Synthesizing {dataset_name}[{schema.__name__}]"
                     )
                     for i, res in zip(idxs, sub):
@@ -718,6 +736,7 @@ def synthesize_from_reports(
             else:
                 gen_results_raw = client.batch_generate_structure(
                     batch_prompts, output_schema,
+                    mode="create",
                     desc=f"Synthesizing {dataset_name}"
                 )
 
@@ -828,6 +847,8 @@ def run_stage3_synthesis(
     output_dir: str = "data_output/synth_raw",
     model_name: str = "unknown_model",
     batch_size: int = 10,
+    target_difficulty: str = "",
+    difficulty_weights: Optional[Dict[str, float]] = None,
 ) -> Optional[Path]:
     """从维度诊断报告（dimension_reports.jsonl）生成并保存原始候选数据
 
@@ -878,9 +899,9 @@ def run_stage3_synthesis(
                 try:
                     item = json.loads(line)
                     mid = item.get("meta", {}).get("id", "")
-                    m = re.match(r'synthetic_\w+_(\d+)_(\d+)$', mid)
-                    if m:
-                        existing_pairs.add((int(m.group(1)), int(m.group(2))))
+                    pair = _parse_existing_pair_id(mid)
+                    if pair is not None:
+                        existing_pairs.add(pair)
                 except Exception:
                     pass
         if existing_pairs:
@@ -900,6 +921,8 @@ def run_stage3_synthesis(
         existing_pairs=existing_pairs,
         batch_size=batch_size,
         output_file=output_file,
+        target_difficulty=target_difficulty,
+        difficulty_weights=difficulty_weights,
     )
 
     if not synthesized:

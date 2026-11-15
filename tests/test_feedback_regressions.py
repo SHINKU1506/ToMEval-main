@@ -1,6 +1,12 @@
 from feedback.stage1_load_predictions import _extract_letters, _is_correct, get_dimension_key
 from feedback.stage2_diagnosis import allocate_sombench_reports_by_qtype
-from feedback.stage3_synthesis import EmoBenchGroupedQuestionFlat, EmoBenchQuestionFlat, ToMBenchQuestionFlat
+from feedback.stage3_synthesis import (
+    EmoBenchGroupedQuestionFlat,
+    EmoBenchQuestionFlat,
+    ToMBenchQuestionFlat,
+    _parse_existing_pair_id,
+    synthesize_from_reports,
+)
 from feedback.prompts import build_stage2_generation_from_report_prompt
 from feedback.report_summary import generate_summary_report
 from filter.eval.eval_answerability_full import _build_prompt as build_answerability_prompt
@@ -141,6 +147,76 @@ def test_sombench_q3_variants_rotate_verdict_targets():
     assert "correct_verdict\": \"是\"" in prompts[0]
     assert "correct_verdict\": \"否\"" in prompts[1]
     assert "correct_verdict\": \"无法确定\"" in prompts[2]
+
+
+def test_hard_mix_schedules_hard_medium_and_easy_variants():
+    report = {
+        "dimension": "false_belief",
+        "common_error_patterns": [],
+        "primary_cognitive_operation": "belief_state_update",
+        "difficulty_distribution": {"easy": 0.2, "medium": 0.5, "hard": 0.3},
+    }
+
+    prompts = [
+        build_stage2_generation_from_report_prompt(
+            report,
+            "ToMBench",
+            variant_index=i,
+            target_difficulty="hard_mix",
+        )
+        for i in (0, 14, 19)
+    ]
+
+    assert "Target difficulty: **hard**" in prompts[0]
+    assert "Target difficulty: **medium**" in prompts[1]
+    assert "Target difficulty: **easy**" in prompts[2]
+
+
+def test_tombench_synthesis_forces_create_mode_for_fenced_json(monkeypatch):
+    from types import SimpleNamespace
+    import feedback.stage3_synthesis as stage3
+
+    calls = []
+
+    class FakeClient:
+        def batch_generate_structure(self, prompts, schema, mode="auto", desc=""):
+            calls.append(mode)
+            assert mode == "create"
+            question = ToMBenchQuestionFlat(
+                story="A story.",
+                question="What does Alex believe? A. Red B. Blue C. Green D. Yellow",
+                correct_letter="A",
+                meta_ability="false_belief",
+                meta_id="synthetic-1",
+            )
+            return [SimpleNamespace(content=SimpleNamespace(questions=[question])) for _ in prompts]
+
+    monkeypatch.setattr(stage3.runner, "create_llm_client", lambda config: FakeClient())
+
+    results, stats = synthesize_from_reports(
+        reports=[{
+            "dimension": "false_belief",
+            "common_error_patterns": [],
+            "primary_cognitive_operation": "belief_state_update",
+            "difficulty_distribution": {},
+        }],
+        dataset_name="ToMBench",
+        synthesis_llm_config={"model_name": "test"},
+        samples_per_report=1,
+        max_retries=1,
+    )
+
+    assert calls == ["create"]
+    assert stats["succeeded"] == 1
+    assert len(results) == 1
+
+
+def test_stage3_resume_recognizes_question_type_suffix_in_ids():
+    assert _parse_existing_pair_id("synthetic_tombench_000_0_0") == (0, 0)
+    assert _parse_existing_pair_id("synthetic_tombench_001_0_0") == (1, 0)
+    assert _parse_existing_pair_id("synthetic_tombench_003_4_0") == (3, 4)
+    assert _parse_existing_pair_id("synthetic_tombench_012_4") == (12, 4)
+    assert _parse_existing_pair_id("not-a-synthetic-id") is None
 
 
 def test_stage1_preserves_multiple_prediction_letters():
