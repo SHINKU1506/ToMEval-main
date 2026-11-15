@@ -8,6 +8,7 @@
 """
 
 import json
+import re
 from typing import Any, Dict, List, Optional
 
 
@@ -452,6 +453,7 @@ A language model failed on the following {K} questions from the **{dimension}** 
 5. failure_trigger must describe the de-identified reasoning trap, not copy the source question
 6. required_distractor_logic must state which shortcut each important distractor should trigger
 7. hard_constraints must list structural constraints for a hard variant
+8. NEVER require or reward a confirming reaction: no constraint, trigger, distractor, or pattern may rely on another agent's subsequent response, reply, action, or nod that confirms or disambiguates the answer. New questions stop at the queried moment, so the answer must be inferable from evidence available BEFORE it
 
 cognitive_operation options (choose the most specific match):
   belief_state_update    — failed to update an agent's belief after an unwitnessed event
@@ -700,6 +702,30 @@ _SYNTHESIS_LANGUAGE_DIRECTIVES = {
 }
 
 
+# Report items that ask for a post-target confirming reaction contradict the
+# STOP AT TARGET MOMENT rule and leak the answer into the story.
+_SPOILER_CONSTRAINT_PATTERNS = (
+    re.compile(r"\b(?:confirm\w*|disambiguat\w*)\b", re.IGNORECASE),
+    re.compile(
+        r"\b(?:subsequent|later|follow-?up|ensuing|resulting)\s+(?:\w+\s+)?"
+        r"(?:response|reply|replies|reaction|action|actions|behaviou?r|move|compliance)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\brespond\w*\s+in\s+a\s+way\s+that\b", re.IGNORECASE),
+    re.compile(r"(?:随后|之后|后续)的?(?:回应|回复|反应|行动|动作|行为)|证实|确认了?(?:其|该|这一)?(?:意图|含义|答案)"),
+)
+
+
+def _sanitize_report_items(items: Any) -> List[str]:
+    """Drop de-identified report items that depend on a post-target reaction."""
+    if not isinstance(items, list):
+        return []
+    return [
+        str(item) for item in items
+        if str(item).strip() and not any(p.search(str(item)) for p in _SPOILER_CONSTRAINT_PATTERNS)
+    ]
+
+
 def _build_interleaved_difficulty_schedule(
     weights: Optional[Dict[str, float]],
     total_slots: int = 20,
@@ -873,7 +899,10 @@ def build_stage2_generation_from_report_prompt(
     else:
         retry_feedback = ""
 
-    common_patterns = report.get("common_error_patterns", [])
+    common_patterns = _sanitize_report_items(report.get("common_error_patterns", []))
+    failure_trigger = _sanitize_report_items(report.get("failure_trigger", []))
+    required_distractor_logic = _sanitize_report_items(report.get("required_distractor_logic", []))
+    hard_constraints = _sanitize_report_items(report.get("hard_constraints", []))
     synthesis_themes = report.get("recommended_synthesis_themes", [])
     dimension = report.get("dimension", "unknown")
 
@@ -906,9 +935,9 @@ def build_stage2_generation_from_report_prompt(
         "secondary_cognitive_operations": report.get("secondary_cognitive_operations", []),
         "recommended_synthesis_themes": synthesis_themes,
         "difficulty_distribution": difficulty_distribution,
-        "failure_trigger": report.get("failure_trigger", []),
-        "required_distractor_logic": report.get("required_distractor_logic", []),
-        "hard_constraints": report.get("hard_constraints", []),
+        "failure_trigger": failure_trigger,
+        "required_distractor_logic": required_distractor_logic,
+        "hard_constraints": hard_constraints,
         "difficulty_policy": policy,
     }, indent=2, ensure_ascii=False)
 
@@ -927,9 +956,9 @@ def build_stage2_generation_from_report_prompt(
         report_summary=report_summary,
         primary_cognitive_operation=primary_op,
         common_error_patterns="\n".join(f"- {p}" for p in common_patterns) or "- failed to perform required cognitive operation",
-        failure_trigger="\n".join(f"- {p}" for p in report.get("failure_trigger", [])) or "- preserve the diagnosed reasoning trap",
-        required_distractor_logic="\n".join(f"- {p}" for p in report.get("required_distractor_logic", [])) or "- include a distractor for the diagnosed shortcut",
-        hard_constraints="\n".join(f"- {p}" for p in report.get("hard_constraints", [])) or "- include at least one information-boundary constraint",
+        failure_trigger="\n".join(f"- {p}" for p in failure_trigger) or "- preserve the diagnosed reasoning trap",
+        required_distractor_logic="\n".join(f"- {p}" for p in required_distractor_logic) or "- include a distractor for the diagnosed shortcut",
+        hard_constraints="\n".join(f"- {p}" for p in hard_constraints) or "- include at least one information-boundary constraint",
         synthesis_themes="\n".join(f"- {t}" for t in synthesis_themes) or "- everyday social scenarios",
         difficulty=difficulty,
         format_specific_rules=format_specific_rules,

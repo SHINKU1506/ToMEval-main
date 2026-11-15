@@ -513,3 +513,31 @@ def test_filter_grouped_rows_use_grouped_prompt_and_reward_parsing():
     response = SimpleNamespace(content="\\boxed{A}\n\\boxed{C}")
     assert extract_prediction_value("mcq_grouped", response) == ["A", "C"]
     assert is_correct_mcq("mcq_grouped", response, ["A", "C"])
+
+
+def test_report_sanitizer_drops_post_target_confirmation_items():
+    from feedback.prompts import _sanitize_report_items
+
+    items = [
+        "At least one relevant agent must respond in a way that confirms or disambiguates the implied intention.",
+        "Agent A ignores the subsequent response of Agent C as evidence of a shared intention.",
+        "Include a literal-meaning distractor that should trigger a word-by-word interpretation shortcut.",
+        "Agent A's partial observation must precede the hidden update.",
+    ]
+    assert _sanitize_report_items(items) == items[2:]
+
+
+def test_generation_prompt_omits_confirmation_constraints_from_report():
+    report = {
+        "dimension": "Intention: Intentions explanations",
+        "primary_cognitive_operation": "pragmatic_inference",
+        "common_error_patterns": ["Agent A reads the utterance literally."],
+        "hard_constraints": [
+            "At least one relevant agent must respond in a way that confirms the implied intention.",
+            "The intended meaning must be inferable only from the preceding context.",
+        ],
+        "_meta": {"lang": "en"},
+    }
+    prompt = build_stage2_generation_from_report_prompt(report, "ToMBench", target_difficulty="hard")
+    assert "respond in a way that confirms" not in prompt
+    assert "inferable only from the preceding context" in prompt
