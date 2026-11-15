@@ -920,10 +920,11 @@ def build_stage2_generation_from_report_prompt(
                 f"Previous attempt metadata: {prev_str}\n\n"
             )
         else:
+            solver_result = previous_question.get("solver_result") if isinstance(previous_question, dict) else None
             retry_feedback = (
             "## ⚠ RETRY — Previous Attempt Was Too Easy\n"
             "The question below was generated for this same error pattern but rejected because "
-            "the target model answered it correctly every time. "
+            f"the target model answered it correctly too often ({solver_result or 'every time'}). "
             "Study what made it too easy, then generate a HARDER version.\n\n"
             "### Previous Question (rejected)\n"
             f"```json\n{prev_str}\n```\n\n"
@@ -931,7 +932,9 @@ def build_stage2_generation_from_report_prompt(
             "- Add more surface-level misdirection in the story that points toward a wrong answer\n"
             "- Make at least one wrong answer represent EXACTLY what the model outputs when it "
             f"skips {primary_op} — it must be irresistible to a model that shortcuts\n"
-            "- Use a completely different story scenario (new names, setting, situation)\n\n"
+            "- Use a completely different story scenario (new names, setting, situation)\n"
+            "- Do not make the correct option the only one that integrates all planted details; "
+            "make the strongest distractor consistent with all but one decisive fact\n\n"
             )
     else:
         retry_feedback = ""

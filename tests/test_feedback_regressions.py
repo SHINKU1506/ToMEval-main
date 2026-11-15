@@ -1,3 +1,4 @@
+import json
 from feedback.stage1_load_predictions import _extract_letters, _is_correct, get_dimension_key
 from feedback.stage2_diagnosis import allocate_sombench_reports_by_qtype
 from feedback.stage3_synthesis import (
@@ -633,3 +634,108 @@ def test_synthesis_covers_every_report_before_second_variant(monkeypatch):
     reports = [{"id": i, "_meta": {"lang": "en"}} for i in range(3)]
     s3.synthesize_from_reports(reports, "ToMBench", {}, samples_per_report=2, max_retries=1)
     assert seen == [(0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (2, 1)]
+
+
+def test_difficulty_gate_rejects_easy_question_and_retries_with_too_easy_feedback(monkeypatch, tmp_path):
+    import feedback.stage3_synthesis as s3
+    from types import SimpleNamespace
+
+    story = "Maya read the first page of the revised schedule."
+    prompts_seen = []
+
+    class FakeClient:
+        def batch_generate_structure(self, prompts, schema, mode, desc):
+            prompts_seen.extend(prompts)
+            q = ToMBenchQuestionFlat(
+                reasoning_trap_plan="plan",
+                target_moment=story,
+                story=story,
+                question="When does Maya expect the meeting? A. At noon B. At ten C. At two D. At four",
+                correct_letter="A",
+                meta_ability="false_belief",
+                meta_id="x",
+            )
+            return [SimpleNamespace(content=SimpleNamespace(questions=[q])) for _ in prompts]
+
+    class FakeGate:
+        model_name = "qwen3.8-flash"
+        k = 4
+
+        def __init__(self):
+            self.calls = 0
+
+        def evaluate(self, rows, dataset_name):
+            self.calls += 1
+            correct = 4 if self.calls == 1 else 1
+            return {r["meta"]["id"]: {"correct": correct, "total": 4, "solve_rate": correct / 4} for r in rows}
+
+        def passes(self, stats):
+            return stats["solve_rate"] <= 0.75
+
+    monkeypatch.setattr(s3.runner, "create_llm_client", lambda cfg: FakeClient())
+    gate = FakeGate()
+    log_file = tmp_path / "gate.jsonl"
+    rows, stats = s3.synthesize_from_reports(
+        [{"dimension": "d", "primary_cognitive_operation": "belief_state_update", "_meta": {"lang": "en"}}],
+        "ToMBench", {}, samples_per_report=1, max_retries=2,
+        target_difficulty="hard", difficulty_gate=gate, gate_log_file=log_file,
+    )
+
+    assert len(rows) == 1 and stats["difficulty_gate_rejected"] == 1
+    assert "Previous Attempt Was Too Easy" in prompts_seen[1]
+    assert "4/4 correct by the target model" in prompts_seen[1]
+    log = [json.loads(line) for line in log_file.read_text(encoding="utf-8").splitlines()]
+    assert [entry["passed"] for entry in log] == [False, True]
+
+
+def test_difficulty_gate_drops_question_still_easy_after_last_round(monkeypatch):
+    import feedback.stage3_synthesis as s3
+    from types import SimpleNamespace
+
+    story = "Maya read the first page of the revised schedule."
+
+    class FakeClient:
+        def batch_generate_structure(self, prompts, schema, mode, desc):
+            q = ToMBenchQuestionFlat(
+                target_moment=story, story=story,
+                question="When does Maya expect the meeting? A. At noon B. At ten C. At two D. At four",
+                correct_letter="A", meta_ability="false_belief", meta_id="x",
+            )
+            return [SimpleNamespace(content=SimpleNamespace(questions=[q])) for _ in prompts]
+
+    class AlwaysEasyGate:
+        model_name, k = "qwen3.8-flash", 4
+
+        def evaluate(self, rows, dataset_name):
+            return {r["meta"]["id"]: {"correct": 4, "total": 4, "solve_rate": 1.0} for r in rows}
+
+        def passes(self, stats):
+            return stats["solve_rate"] <= 0.75
+
+    monkeypatch.setattr(s3.runner, "create_llm_client", lambda cfg: FakeClient())
+    rows, stats = s3.synthesize_from_reports(
+        [{"dimension": "d", "_meta": {"lang": "en"}}], "ToMBench", {},
+        samples_per_report=1, max_retries=2, target_difficulty="hard", difficulty_gate=AlwaysEasyGate(),
+    )
+    assert rows == [] and stats["difficulty_gate_rejected"] == 2
+
+
+def test_difficulty_gate_scores_with_eval_pipeline(monkeypatch):
+    import feedback.difficulty_gate as dg
+    from src.llm.client import LLMResponse
+
+    class FakeContentClient:
+        def batch_generate(self, prompts, desc="", system_prompts=None):
+            return [LLMResponse(content="\boxed{A}", reasoning="") for _ in prompts]
+
+    monkeypatch.setattr(dg.runner, "create_content_client", lambda cfg: FakeContentClient())
+    gate = dg.DifficultyGate({"model_name": "qwen3.8-flash", "api_key": "k", "api_url": "u"}, k=4)
+    row = {
+        "story": "s", "question": "q",
+        "answer": {"correct_answers": ["right"], "wrong_answers": ["w1", "w2", "w3"]},
+        "meta": {"id": "synthetic_tombench_000_0_0", "lang": "en"},
+    }
+    stats = gate.evaluate([row], "ToMBench")["synthetic_tombench_000_0_0"]
+    assert stats["total"] == 4 and 0 <= stats["correct"] <= 4
+    assert gate.passes({"correct": 3, "total": 4, "solve_rate": 0.75})
+    assert not gate.passes({"correct": 4, "total": 4, "solve_rate": 1.0})

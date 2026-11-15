@@ -214,6 +214,19 @@ def run_pipeline(config_path: str):
         logger.info("🎨 Stage 3: 根据诊断报告生成新训练数据")
         logger.info(f"{'='*70}")
         from feedback.stage3_synthesis import run_stage3_synthesis
+        from feedback.difficulty_gate import build_difficulty_gate
+
+        # 难度闸门：synthesis.difficulty_gate 给阈值，roles.difficulty_gate 给 solver 模型与凭证。
+        gate_settings = dict(syn_config.get("difficulty_gate") or {})
+        if gate_settings.get("enabled"):
+            gate_settings["llm"] = roles.get("difficulty_gate") or {}
+        difficulty_gate = build_difficulty_gate(gate_settings)
+        gate_difficulties = tuple(gate_settings.get("difficulties") or ("hard",))
+        if difficulty_gate is not None:
+            logger.info(
+                f"  🎯 难度闸门: {difficulty_gate.model_name} pass@{difficulty_gate.k}, "
+                f"solve_rate ≤ {difficulty_gate.max_solve_rate}, 适用难度 {list(gate_difficulties)}"
+            )
 
         for ds_info in synthesis_datasets:
             ds = ds_info["name"]
@@ -260,6 +273,8 @@ def run_pipeline(config_path: str):
                     batch_size=synthesis_batch_size,
                     target_difficulty=target_difficulty,
                     difficulty_weights=difficulty_weights,
+                    difficulty_gate=difficulty_gate,
+                    gate_difficulties=gate_difficulties,
                 )
                 if out_path:
                     with open(out_path, encoding="utf-8") as f:

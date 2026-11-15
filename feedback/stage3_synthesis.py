@@ -778,6 +778,9 @@ def synthesize_from_reports(
     output_file: Optional[Path] = None,
     target_difficulty: str = "",
     difficulty_weights: Optional[Dict[str, float]] = None,
+    difficulty_gate: Optional[Any] = None,
+    gate_difficulties: Tuple[str, ...] = ("hard",),
+    gate_log_file: Optional[Path] = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """从维度级诊断报告合成新样本，每份报告生成 samples_per_report 条题目。
 
@@ -791,6 +794,9 @@ def synthesize_from_reports(
         max_retries: 生成失败时最多重试次数
         batch_size: 每批并发请求数，每批完成后立即写盘
         output_file: 若提供，每批完成后追加写入该文件
+        difficulty_gate: 若提供（DifficultyGate），gate_difficulties 内的题先跑 solver pass@k，
+            solve_rate 超阈值的题打回重写；最后一轮仍过易则丢弃
+        gate_log_file: 若提供，追加写入每次闸门判定（含被拒题目）
 
     Returns:
         (synthesized_data, stats) 元组
@@ -835,6 +841,7 @@ def synthesize_from_reports(
     results: Dict[Tuple[int, int], Dict[str, Any]] = {}
     last_failed: Dict[Tuple[int, int], Dict[str, Any]] = {}
     generation_attempts: Dict[Tuple[int, int], int] = {p: 0 for p in pending_pairs}
+    gate_rejected = 0
 
     for round_idx in range(max_retries):
         if not pending_pairs:
@@ -887,6 +894,8 @@ def synthesize_from_reports(
                 )
 
             batch_new: List[Dict[str, Any]] = []
+            # 通过结构校验、等待难度闸门判定的 pair → rows
+            gate_candidates: Dict[Tuple[int, int], List[Dict[str, Any]]] = {}
             for pair, resp in zip(batch_pairs, gen_results_raw):
                 r_idx, s_idx = pair
                 generation_attempts[pair] = generation_attempts.get(pair, 0) + 1
@@ -935,11 +944,50 @@ def synthesize_from_reports(
                     if validation_error:
                         last_failed[pair] = {"_failure_reason": validation_error}
                         continue
+                    if difficulty_gate is not None and pair_difficulty in gate_difficulties:
+                        gate_candidates[pair] = q_rows
+                        continue
                     results[pair] = q_rows
                     batch_new.extend(q_rows)
                     success_this_round += 1
                 else:
                     last_failed[pair] = {"_failure_reason": "structured_output_failed"}
+
+            if gate_candidates:
+                gate_rows = [row for rows in gate_candidates.values() for row in rows]
+                solve_stats = difficulty_gate.evaluate(gate_rows, dataset_name)
+                gate_log: List[Dict[str, Any]] = []
+                for pair, q_rows in gate_candidates.items():
+                    row_stats = [solve_stats.get(str((r.get("meta") or {}).get("id"))) for r in q_rows]
+                    passed = all(difficulty_gate.passes(st) for st in row_stats)
+                    gate_log.append({
+                        "pair": list(pair),
+                        "round": round_idx + 1,
+                        "solver": difficulty_gate.model_name,
+                        "stats": row_stats,
+                        "passed": passed,
+                    })
+                    if passed:
+                        results[pair] = q_rows
+                        batch_new.extend(q_rows)
+                        success_this_round += 1
+                        continue
+                    gate_rejected += 1
+                    worst = max((st for st in row_stats if st), key=lambda st: st["solve_rate"])
+                    # 不带 _failure_reason → 触发 prompt 中的 "Previous Attempt Was Too Easy" 分支
+                    last_failed[pair] = {
+                        "story": q_rows[0].get("story"),
+                        "question": q_rows[0].get("question"),
+                        "answer": q_rows[0].get("answer"),
+                        "solver_result": f"{worst['correct']}/{worst['total']} correct by the target model",
+                    }
+                    if gate_log_file is not None:
+                        gate_log[-1]["rejected_rows"] = q_rows
+                if gate_log_file is not None:
+                    gate_log_file.parent.mkdir(parents=True, exist_ok=True)
+                    with open(gate_log_file, "a", encoding="utf-8") as _f:
+                        for item in gate_log:
+                            _f.write(json.dumps(item, ensure_ascii=False) + "\n")
 
             if output_file is not None and batch_new:
                 output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -958,6 +1006,7 @@ def synthesize_from_reports(
         "succeeded": len(final_results),
         "failed": total_target - len(final_results),
         "total_generation_calls": sum(generation_attempts.values()),
+        "difficulty_gate_rejected": gate_rejected,
     }
 
     logger.info(f"synthesize_from_reports complete: {len(final_results)}/{total_target} questions produced")
@@ -1012,6 +1061,8 @@ def run_stage3_synthesis(
     batch_size: int = 10,
     target_difficulty: str = "",
     difficulty_weights: Optional[Dict[str, float]] = None,
+    difficulty_gate: Optional[Any] = None,
+    gate_difficulties: Tuple[str, ...] = ("hard",),
 ) -> Optional[Path]:
     """从维度诊断报告（dimension_reports.jsonl）生成并保存原始候选数据
 
@@ -1086,7 +1137,12 @@ def run_stage3_synthesis(
         output_file=output_file,
         target_difficulty=target_difficulty,
         difficulty_weights=difficulty_weights,
+        difficulty_gate=difficulty_gate,
+        gate_difficulties=gate_difficulties,
+        gate_log_file=(output_file.parent / f"difficulty_gate_{safe_model}.jsonl") if difficulty_gate else None,
     )
+    if difficulty_gate is not None:
+        logger.info(f"  难度闸门（{difficulty_gate.model_name} pass@{difficulty_gate.k}）拒绝 {stats.get('difficulty_gate_rejected', 0)} 次")
 
     if not synthesized:
         logger.warning("  No new synthesized questions produced")

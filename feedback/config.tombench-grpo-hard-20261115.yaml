@@ -28,6 +28,11 @@ roles:
     max_tokens: 32768
     temperature: 0.6
     enable_thinking: false
+  difficulty_gate:
+    # pass@k solver; sampling params are overridden by the cot protocol.
+    api_profile: synthesis
+    model_name: qwen3.8-flash
+    max_workers: 16
 
 output_path: D:/workspace/pre/rsi/output/tombench-grpo-hard-20261115
 predictions_root: D:/workspace/pre/rsi/output/tomeval-sft-final-20261111-01/feedback_inputs/results
@@ -49,6 +54,12 @@ synthesis:
     hard: 1.00
     medium: 0.00
     easy: 0.00
+  difficulty_gate:
+    enabled: true
+    k: 4
+    max_solve_rate: 0.75   # reject when qwen3.8-flash solves >= 4/4
+    protocol: cot
+    difficulties: [hard]
 
 synthesis_datasets:
   - name: ToMBench
