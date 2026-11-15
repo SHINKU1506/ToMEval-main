@@ -72,6 +72,41 @@ def _parse_existing_pair_id(meta_id: str) -> Optional[Tuple[int, int]]:
     return int(match.group(1)), int(match.group(2))
 
 
+def _validate_synthesized_question(
+    q_dict: Dict[str, Any],
+    dataset_name: str,
+) -> Optional[str]:
+    """Validate structural integrity and option length symmetry of a candidate.
+
+    Returns a short failure reason string for retry feedback, or None when valid.
+    """
+    story = str(q_dict.get("story") or "").strip()
+    question = str(q_dict.get("question") or "").strip()
+    if not story or not question:
+        return "empty_story_or_question"
+
+    if dataset_name == "ToMBench":
+        answer = q_dict.get("answer") or {}
+        correct = [str(x).strip() for x in (answer.get("correct_answers") or []) if str(x).strip()]
+        wrong = [str(x).strip() for x in (answer.get("wrong_answers") or []) if str(x).strip()]
+        if len(correct) != 1 or len(wrong) != 3:
+            return "tombench_requires_1_correct_and_3_wrong_options"
+        if re.fullmatch(r"[A-D]", correct[0], re.IGNORECASE):
+            return "tombench_failed_to_parse_option_texts_from_question"
+        if re.search(r"(?<![A-Za-z])[A-D][.．]\s+", question):
+            return "tombench_question_still_contains_embedded_options"
+        unique_opts = {opt.casefold() for opt in (correct + wrong)}
+        if len(unique_opts) < 4:
+            return "duplicate_answer_options"
+        clen = len(correct[0])
+        max_w = max(len(w) for w in wrong)
+        avg_w = sum(len(w) for w in wrong) / len(wrong)
+        if clen >= 24 and max_w > 0 and clen > 1.45 * max_w and clen > 1.65 * avg_w:
+            return "correct_option_significantly_longer_than_distractors_match_option_lengths"
+
+    return None
+
+
 # ============ 数据合成Schema ============
 
 # ---- ToMBench ----
@@ -765,7 +800,12 @@ def synthesize_from_reports(
                         q_rows = [q.to_storage_dict()]
                     else:
                         q_rows = [q if isinstance(q, dict) else dict(q)]
+                    validation_error = None
                     for row_idx, q_dict in enumerate(q_rows):
+                        err = _validate_synthesized_question(q_dict, dataset_name)
+                        if err:
+                            validation_error = err
+                            break
                         q_dict.setdefault("meta", {})
                         meta = q_dict.get("meta", {})
                         if isinstance(meta, dict):
@@ -773,6 +813,9 @@ def synthesize_from_reports(
                             meta["id"] = f"synthetic_{dataset_name.lower()}_{r_idx:03d}_{s_idx}_{subtype}"
                             meta.setdefault("history", [])
                             meta["lang"] = str((reports[r_idx].get("_meta") or {}).get("lang") or "en")
+                    if validation_error:
+                        last_failed[pair] = {"_failure_reason": validation_error}
+                        continue
                     results[pair] = q_rows
                     batch_new.extend(q_rows)
                     success_this_round += 1

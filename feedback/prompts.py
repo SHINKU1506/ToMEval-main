@@ -670,7 +670,9 @@ If the question accidentally tests a different cognitive operation, revise it.
 5. Choose a story theme from the Recommended Story Themes if possible
 6. {format_specific_rules}
 7. Set meta_difficulty to "{difficulty}" (from the Complexity Specification above)
-8. After drafting, verify: (a) cognitive operation is {primary_cognitive_operation}, (b) story length matches the Dataset Story Style, (c) all wrong answers pass the DISTRACTOR DESIGN self-check
+8. [NO SPOILER / STOP AT TARGET MOMENT] The story MUST end at or right before the target moment queried by the question. NEVER narrate any subsequent action, reply, execution, or clarification that spoils or executes the answer
+9. [OPTION SYMMETRY & DETERMINACY] Keep all choices balanced in specificity, syntactic completeness, and approximate length (do NOT make the correct option noticeably longer or more detailed than the distractors). Ensure the story cleanly determines one unique answer without ambiguous guessing
+10. After drafting, verify: (a) cognitive operation is {primary_cognitive_operation}, (b) story stops before any spoiler, (c) all options match in length/detail and pass the DISTRACTOR DESIGN self-check
 
 {retry_feedback}## Output
 Generate {target_count} question(s) following the exact format above.

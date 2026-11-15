@@ -5,6 +5,7 @@ from feedback.stage3_synthesis import (
     EmoBenchQuestionFlat,
     ToMBenchQuestionFlat,
     _parse_existing_pair_id,
+    _validate_synthesized_question,
     synthesize_from_reports,
 )
 from feedback.prompts import build_stage2_generation_from_report_prompt
@@ -235,6 +236,77 @@ def test_stage3_resume_recognizes_question_type_suffix_in_ids():
     assert _parse_existing_pair_id("synthetic_tombench_003_4_0") == (3, 4)
     assert _parse_existing_pair_id("synthetic_tombench_012_4") == (12, 4)
     assert _parse_existing_pair_id("not-a-synthetic-id") is None
+
+
+def test_stage3_validator_rejects_length_bias_and_retries(monkeypatch):
+    from types import SimpleNamespace
+    import feedback.stage3_synthesis as stage3
+
+    biased = {
+        "story": "A concise story.",
+        "question": "What does Alex believe?",
+        "answer": {
+            "correct_answers": ["She thinks the parcel arrived yesterday morning before noon and was moved upstairs."],
+            "wrong_answers": ["Left early.", "Not sure.", "Stayed home."],
+        },
+    }
+    assert _validate_synthesized_question(biased, "ToMBench") == (
+        "correct_option_significantly_longer_than_distractors_match_option_lengths"
+    )
+
+    prompts_seen = []
+
+    class FakeClient:
+        def batch_generate_structure(self, prompts, schema, mode="auto", desc=""):
+            prompts_seen.extend(prompts)
+            if len(prompts_seen) == 1:
+                q = ToMBenchQuestionFlat(
+                    story="Maya left her notebook on the desk before going out.",
+                    question=(
+                        "What does Maya think? "
+                        "A. She believes the notebook is still sitting untouched on the same corner of her desk. "
+                        "B. Upstairs. "
+                        "C. Kitchen. "
+                        "D. Gone."
+                    ),
+                    correct_letter="A",
+                    meta_ability="false_belief",
+                    meta_id="s1",
+                )
+            else:
+                q = ToMBenchQuestionFlat(
+                    story="Maya left her notebook on the desk before going out.",
+                    question=(
+                        "What does Maya think? "
+                        "A. The notebook is still on the study desk. "
+                        "B. The notebook was moved to the kitchen. "
+                        "C. The notebook is locked inside the cabinet. "
+                        "D. The notebook was borrowed by her brother."
+                    ),
+                    correct_letter="A",
+                    meta_ability="false_belief",
+                    meta_id="s1",
+                )
+            return [SimpleNamespace(content=SimpleNamespace(questions=[q]))]
+
+    monkeypatch.setattr(stage3.runner, "create_llm_client", lambda config: FakeClient())
+    results, stats = synthesize_from_reports(
+        reports=[{
+            "dimension": "false_belief",
+            "common_error_patterns": [],
+            "primary_cognitive_operation": "belief_state_update",
+            "difficulty_distribution": {},
+        }],
+        dataset_name="ToMBench",
+        synthesis_llm_config={"model_name": "test"},
+        samples_per_report=1,
+        max_retries=2,
+    )
+
+    assert len(prompts_seen) == 2
+    assert "correct option significantly longer than distractors" in prompts_seen[1]
+    assert stats["succeeded"] == 1
+    assert len(results) == 1
 
 
 def test_stage1_preserves_multiple_prediction_letters():
