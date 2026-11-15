@@ -39,6 +39,7 @@ SYNTHESIS_FORMAT_REGISTRY: Dict[str, Dict[str, Any]] = {
         "json_skeleton": {
             "questions": [{
                 "reasoning_trap_plan": "<brief plan before drafting: (1) partial observation vs hidden updates, (2) misleading cue, (3) shortcut behind each wrong option; stripped before storage>",
+                "target_moment": "<exact final sentence or utterance that the question targets; story must end with this text>",
                 "story": "<complete story text>",
                 "question": "<question with A. B. C. D. options embedded>",
                 "correct_letter": "A",
@@ -670,8 +671,9 @@ If the question accidentally tests a different cognitive operation, revise it.
 7. Set meta_difficulty to "{difficulty}" (from the Complexity Specification above)
 8. [NO SPOILER / STOP AT TARGET MOMENT] The story MUST end at or right before the target moment queried by the question. NEVER narrate any subsequent action, reply, execution, or clarification that spoils or executes the answer
 9. [OPTION SYMMETRY & DETERMINACY] Keep all choices balanced in specificity, syntactic completeness, and approximate length (do NOT make the correct option noticeably longer or more detailed than the distractors). Ensure the story cleanly determines one unique answer without ambiguous guessing
-10. [PLAN FIRST] When the JSON schema includes `reasoning_trap_plan`, fill it first with the belief-conflict matrix and per-distractor CoT traps before drafting `story`/`question` (it is stripped before storage; never echo planning text inside `story` or `question`)
-11. After drafting, verify: (a) cognitive operation is {primary_cognitive_operation}, (b) story stops before any spoiler, (c) all options match in length/detail and pass the DISTRACTOR DESIGN self-check
+10. [PLAN FIRST] When the JSON schema includes `reasoning_trap_plan`, fill it first with the belief-conflict matrix and per-distractor CoT traps before drafting `target_moment`/`story`/`question` (planning text is stripped before storage; never echo it inside `story` or `question`)
+11. [TARGET MOMENT CONTRACT] When the JSON schema includes `target_moment`, copy the exact final sentence or utterance that the question targets into that field. The story MUST end with that exact text. Do not write any action, reply, confirmation, or consequence after it.
+12. After drafting, verify: (a) cognitive operation is {primary_cognitive_operation}, (b) `target_moment` is the exact story suffix, (c) story stops before any spoiler, (d) all options match in length/detail and pass the DISTRACTOR DESIGN self-check
 
 {retry_feedback}## Output
 Generate {target_count} question(s) following the exact format above.

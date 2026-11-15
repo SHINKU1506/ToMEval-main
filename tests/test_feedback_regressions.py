@@ -40,6 +40,7 @@ def test_sombench_report_allocation_preserves_available_qtypes():
 
 def test_tombench_storage_removes_embedded_options_from_question():
     question = ToMBenchQuestionFlat(
+        target_moment="A story.",
         story="A story.",
         question="What does A believe? A. The red box B. The blue box C. The green box D. The yellow box",
         correct_letter="B",
@@ -202,6 +203,7 @@ def test_tombench_synthesis_forces_create_mode_for_fenced_json(monkeypatch):
             calls.append(mode)
             assert mode == "create"
             question = ToMBenchQuestionFlat(
+                target_moment="A story.",
                 story="A story.",
                 question="What does Alex believe? A. Red B. Blue C. Green D. Yellow",
                 correct_letter="A",
@@ -261,6 +263,7 @@ def test_stage3_validator_rejects_length_bias_and_retries(monkeypatch):
             prompts_seen.extend(prompts)
             if len(prompts_seen) == 1:
                 q = ToMBenchQuestionFlat(
+                    target_moment="Maya left her notebook on the desk before going out.",
                     story="Maya left her notebook on the desk before going out.",
                     question=(
                         "What does Maya think? "
@@ -275,6 +278,7 @@ def test_stage3_validator_rejects_length_bias_and_retries(monkeypatch):
                 )
             else:
                 q = ToMBenchQuestionFlat(
+                    target_moment="Maya left her notebook on the desk before going out.",
                     story="Maya left her notebook on the desk before going out.",
                     question=(
                         "What does Maya think? "
@@ -355,6 +359,7 @@ def test_tombench_schema_plans_before_story_and_strips_plan_on_storage():
 
     q = ToMBenchQuestionFlat(
         reasoning_trap_plan="Obs vs hidden swap; C=omniscient truth.",
+        target_moment="Short natural story.",
         story="Short natural story.",
         question="What does Sam expect? A. Tea B. Coffee C. Cocoa D. Milk",
         correct_letter="A",
@@ -367,6 +372,41 @@ def test_tombench_schema_plans_before_story_and_strips_plan_on_storage():
         "correct_answers": ["Tea"],
         "wrong_answers": ["Coffee", "Cocoa", "Milk"],
     }
+
+
+def test_hard_tombench_rejects_story_continuing_after_target_moment():
+    sample = ToMBenchQuestionFlat(
+        reasoning_trap_plan="Partial cue; hidden update; distractors use world truth.",
+        target_moment='Maya asks, "Did the key stay in the drawer?"',
+        story=(
+            'Maya asks, "Did the key stay in the drawer?" '
+            "Liam immediately opens the drawer and points to the key."
+        ),
+        question='At that moment, what does Maya intend to find out? A. The key location. B. The weather. C. The time. D. The price.',
+        correct_letter="A",
+        meta_ability="pragmatic_inference",
+        meta_id="s1",
+    )
+    stored = sample.to_storage_dict()
+    stored["_target_moment"] = sample.target_moment
+    assert _validate_synthesized_question(stored, "ToMBench", difficulty="hard") == (
+        "story_continues_after_target_moment"
+    )
+
+
+def test_hard_tombench_accepts_story_ending_at_target_moment():
+    sample = ToMBenchQuestionFlat(
+        reasoning_trap_plan="Partial cue; hidden update; distractors use world truth.",
+        target_moment='Maya asks, "Did the key stay in the drawer?"',
+        story='Maya asks, "Did the key stay in the drawer?"',
+        question='At that moment, what does Maya intend to find out? A. The key location. B. The weather. C. The time. D. The price.',
+        correct_letter="A",
+        meta_ability="pragmatic_inference",
+        meta_id="s1",
+    )
+    stored = sample.to_storage_dict()
+    stored["_target_moment"] = sample.target_moment
+    assert _validate_synthesized_question(stored, "ToMBench", difficulty="hard") is None
 
 
 def test_stage1_preserves_multiple_prediction_letters():

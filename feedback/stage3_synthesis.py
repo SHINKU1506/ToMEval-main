@@ -112,6 +112,17 @@ def _validate_synthesized_question(
     if difficulty == "hard" and _find_explicit_signpost(story) is not None:
         return "explicit_isolation_signpost_detected_rewrite_boundaries_implicitly"
 
+    if difficulty == "hard":
+        target_moment = str(
+            q_dict.get("_target_moment") or q_dict.get("target_moment") or ""
+        ).strip()
+        if not target_moment:
+            return "missing_target_moment"
+        story_compact = re.sub(r"\s+", " ", story).strip()
+        target_compact = re.sub(r"\s+", " ", target_moment).strip()
+        if not story_compact.endswith(target_compact):
+            return "story_continues_after_target_moment"
+
     if dataset_name == "ToMBench":
         answer = q_dict.get("answer") or {}
         correct = [str(x).strip() for x in (answer.get("correct_answers") or []) if str(x).strip()]
@@ -143,6 +154,9 @@ class ToMBenchQuestionFlat(BaseModel):
         description="Pre-drafting plan (stripped before storage): state (1) target agent's partial observations vs hidden updates, "
                     "(2) plausible misleading cue, (3) what flawed reasoning path each distractor exploits. Do NOT copy into story/question.",
     )
+    target_moment: str = Field(
+        description="Exact final sentence or utterance targeted by the question. The story must end with this text; do not include any subsequent action.",
+    )
     story: str = Field(description="Complete story text as a plain string")
     question: str = Field(
         description="Question text with all 4 answer options embedded inline, "
@@ -162,7 +176,7 @@ class ToMBenchQuestionFlat(BaseModel):
     def to_storage_dict(self, synthesis_diagnosis=None) -> dict:
         q_text = self.question
         correct_text, wrong_texts = _parse_options_from_question(q_text, self.correct_letter)
-        return {
+        stored = {
             "story": self.story,
             "question": _strip_embedded_options(q_text),
             "answer": {
@@ -175,6 +189,9 @@ class ToMBenchQuestionFlat(BaseModel):
                 "dimension": [self.meta_ability],
             },
         }
+        if self.target_moment.strip():
+            stored["_target_moment"] = self.target_moment.strip()
+        return stored
 
 class ToMBenchSynthesisOutput(BaseModel):
     questions: List[ToMBenchQuestionFlat]
@@ -852,6 +869,8 @@ def synthesize_from_reports(
                             meta["id"] = f"synthetic_{dataset_name.lower()}_{r_idx:03d}_{s_idx}_{subtype}"
                             meta.setdefault("history", [])
                             meta["lang"] = str((reports[r_idx].get("_meta") or {}).get("lang") or "en")
+                    for q_dict in q_rows:
+                        q_dict.pop("_target_moment", None)
                     if validation_error:
                         last_failed[pair] = {"_failure_reason": validation_error}
                         continue
