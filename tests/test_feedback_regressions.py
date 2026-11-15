@@ -150,6 +150,9 @@ def test_sombench_q3_variants_rotate_verdict_targets():
 
 
 def test_hard_mix_schedules_hard_medium_and_easy_variants():
+    import re
+    from collections import Counter
+
     report = {
         "dimension": "false_belief",
         "common_error_patterns": [],
@@ -157,19 +160,34 @@ def test_hard_mix_schedules_hard_medium_and_easy_variants():
         "difficulty_distribution": {"easy": 0.2, "medium": 0.5, "hard": 0.3},
     }
 
-    prompts = [
-        build_stage2_generation_from_report_prompt(
+    # Verify smooth interleaving across a 20-slot cycle and across 5-sample reports
+    picked = []
+    for idx in range(20):
+        prompt = build_stage2_generation_from_report_prompt(
             report,
             "ToMBench",
-            variant_index=i,
+            variant_index=idx % 5,
+            schedule_index=idx,
             target_difficulty="hard_mix",
         )
-        for i in (0, 14, 19)
-    ]
+        m = re.search(r"Target difficulty: \*\*(\w+)\*\*", prompt)
+        assert m is not None
+        picked.append(m.group(1))
 
-    assert "Target difficulty: **hard**" in prompts[0]
-    assert "Target difficulty: **medium**" in prompts[1]
-    assert "Target difficulty: **easy**" in prompts[2]
+    assert Counter(picked) == {"hard": 14, "medium": 5, "easy": 1}
+    # First 5 variants (one report with samples_per_report=5) are no longer 100% hard
+    assert "medium" in picked[:5]
+
+    # Explicit target_difficulty="hard" forces 100% hard across all variants
+    for idx in range(5):
+        prompt_hard = build_stage2_generation_from_report_prompt(
+            report,
+            "ToMBench",
+            variant_index=idx,
+            schedule_index=idx,
+            target_difficulty="hard",
+        )
+        assert "Target difficulty: **hard**" in prompt_hard
 
 
 def test_tombench_synthesis_forces_create_mode_for_fenced_json(monkeypatch):

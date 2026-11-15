@@ -44,11 +44,11 @@ synthesis:
   bad_cases_per_report: 2
   diagnosis_batch_size: 12
   synthesis_batch_size: 20
-  target_difficulty: hard_mix
+  target_difficulty: hard
   difficulty_weights:
-    hard: 0.70
-    medium: 0.25
-    easy: 0.05
+    hard: 1.00
+    medium: 0.00
+    easy: 0.00
 
 synthesis_datasets:
   - name: ToMBench

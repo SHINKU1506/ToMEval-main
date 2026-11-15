@@ -708,6 +708,7 @@ def synthesize_from_reports(
                 variant_index=s_idx,
                 target_difficulty=target_difficulty,
                 difficulty_weights=difficulty_weights,
+                schedule_index=r_idx * samples_per_report + s_idx,
             ) + f"\n\nThis is variant {s_idx + 1} for the same diagnosis. Use a distinct scenario, names, and surface structure from the other variants."
             for (r_idx, s_idx) in pending_pairs
         ]

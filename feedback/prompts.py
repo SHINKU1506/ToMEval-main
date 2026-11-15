@@ -697,6 +697,54 @@ _SYNTHESIS_LANGUAGE_DIRECTIVES = {
 }
 
 
+def _build_interleaved_difficulty_schedule(
+    weights: Optional[Dict[str, float]],
+    total_slots: int = 20,
+) -> List[str]:
+    """Build a smoothly interleaved difficulty schedule from target weights.
+
+    Avoids front-loading all 'hard' items into the first slots so small
+    per-report sample counts still preserve the requested difficulty ratio.
+    """
+    raw = weights or {"hard": 0.70, "medium": 0.25, "easy": 0.05}
+    clean = {
+        label: max(0.0, float(raw.get(label, 0.0)))
+        for label in ("hard", "medium", "easy")
+    }
+    total_weight = sum(clean.values())
+    if total_weight <= 0:
+        return ["medium"]
+
+    normalized = {label: val / total_weight for label, val in clean.items()}
+    counts = {label: round(normalized[label] * total_slots) for label in ("hard", "medium", "easy")}
+    while sum(counts.values()) < total_slots:
+        best = max(("hard", "medium", "easy"), key=lambda k: normalized[k] * total_slots - counts[k])
+        counts[best] += 1
+    while sum(counts.values()) > total_slots:
+        candidates = [k for k in ("easy", "medium", "hard") if counts[k] > 0]
+        if not candidates:
+            break
+        worst = max(candidates, key=lambda k: counts[k] - normalized[k] * total_slots)
+        counts[worst] -= 1
+
+    # Smooth weighted round-robin (deficit scheduling) over total_slots
+    schedule: List[str] = []
+    remaining = dict(counts)
+    emitted = {k: 0 for k in ("hard", "medium", "easy")}
+    for step in range(total_slots):
+        active = [k for k in ("hard", "medium", "easy") if remaining[k] > 0]
+        if not active:
+            break
+        chosen = max(
+            active,
+            key=lambda k: ((step + 1) * counts[k] / total_slots - emitted[k], remaining[k]),
+        )
+        schedule.append(chosen)
+        emitted[chosen] += 1
+        remaining[chosen] -= 1
+    return schedule or ["medium"]
+
+
 def build_stage2_generation_from_report_prompt(
     report: Dict[str, Any],
     dataset_name: str,
@@ -706,6 +754,7 @@ def build_stage2_generation_from_report_prompt(
     variant_index: int = 0,
     target_difficulty: str = "",
     difficulty_weights: Optional[Dict[str, float]] = None,
+    schedule_index: Optional[int] = None,
 ) -> str:
     """构建从维度诊断报告合成新样本的 prompt
 
@@ -738,25 +787,22 @@ def build_stage2_generation_from_report_prompt(
 
     # Difficulty is scheduled explicitly. The old max(distribution) behavior
     # made every variant inherit the modal label and often produced easy data.
+    # Also avoid front-loading 'hard' slots when indexing by per-report variant_index.
     difficulty_distribution = report.get("difficulty_distribution", {})
     policy = str(report.get("difficulty_policy") or "weighted")
-    weights = difficulty_weights or {"hard": 0.70, "medium": 0.25, "easy": 0.05}
-    if target_difficulty == "hard":
+    default_hard_mix = {"hard": 0.70, "medium": 0.25, "easy": 0.05}
+    weights = difficulty_weights or default_hard_mix
+    sched_idx = variant_index if schedule_index is None else schedule_index
+    effective_mode = target_difficulty or policy
+    if effective_mode in ("hard", "hard_only"):
         difficulty = "hard"
-    elif target_difficulty == "hard_mix":
-        schedule = (["hard"] * 14) + (["medium"] * 5) + ["easy"]
-        difficulty = schedule[variant_index % len(schedule)]
-    elif policy == "hard_only":
-        difficulty = "hard"
-    elif policy == "hard_mix":
-        schedule = (["hard"] * 14) + (["medium"] * 5) + ["easy"]
-        difficulty = schedule[variant_index % len(schedule)]
+    elif effective_mode == "hard_mix":
+        schedule = _build_interleaved_difficulty_schedule(weights)
+        difficulty = schedule[sched_idx % len(schedule)]
     else:
-        selected = difficulty_distribution or weights
-        schedule = []
-        for label in ("hard", "medium", "easy"):
-            schedule.extend([label] * max(0, round(float(selected.get(label, 0.0)) * 20)))
-        difficulty = schedule[variant_index % len(schedule)] if schedule else "medium"
+        selected = difficulty_weights or difficulty_distribution or default_hard_mix
+        schedule = _build_interleaved_difficulty_schedule(selected)
+        difficulty = schedule[sched_idx % len(schedule)]
 
     primary_op = str(report.get("primary_cognitive_operation", "belief_state_update"))
 
