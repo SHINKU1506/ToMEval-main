@@ -601,7 +601,9 @@ _DIFFICULTY_RULES: Dict[str, str] = {
         "- Include at least two sequential updates where physical timing, departures, or truncated interactions leave different agents with asymmetric views\n"
         "- NEVER write explicit boolean signposts such as 'working completely alone', 'without telling anyone', 'having spoken to neither', 'without mentioning', 'privately discovered', 'out of earshot', '独自一人', '没有告诉任何人', '未向任何人提起', or '毫不知情' — convey access boundaries implicitly through concrete actions and timing\n"
         "- The question must target one primary cognitive operation at one exact moment, and stop the narrative right there without post-query spoilers\n"
-        "- Wrong options: balance length/detail across all options; include the omniscient truth, an intermediate/partial-cue trap, and another agent's competing belief"
+        "- Wrong options: balance length/detail across all options; include the omniscient truth, an intermediate/partial-cue trap, and another agent's competing belief\n"
+        "{anti_template_rules}\n"
+        "{grounded_distractor_rules}"
     ),
 }
 
@@ -724,6 +726,33 @@ def _sanitize_report_items(items: Any) -> List[str]:
         str(item) for item in items
         if str(item).strip() and not any(p.search(str(item)) for p in _SPOILER_CONSTRAINT_PATTERNS)
     ]
+
+
+# Rotated per variant so sibling variants of one report differ in how the
+# decisive evidence reaches the reader, instead of all using a gaze/smile cue.
+_EVIDENCE_CHANNELS: List[str] = [
+    "a written artifact (note, text message, label, or schedule) that one agent read only partly or before it was revised",
+    "a physical object state (moved, emptied, swapped, or relabeled item) that agents inspected at different times",
+    "a timing or ordering detail (who left or arrived when, what had already finished) that changes what each agent could know",
+    "an overheard or relayed fragment of speech that omits a key qualifier",
+    "a prior commitment, role, or routine that makes an otherwise neutral statement meaningful",
+    "a conflict between two agents' stated preferences or constraints that only one agent fully knows",
+    "a plain spoken exchange with no gesture, glance, or smile, where meaning comes from earlier events alone",
+    "an action taken by mistake or interrupted midway, whose purpose must be reconstructed from the setup",
+]
+
+_ANTI_TEMPLATE_RULES = (
+    "- Decisive evidence channel for THIS variant: {channel}. Build the story around this channel.\n"
+    "- Do NOT use the 'catches eye / glances toward X / smiles / asks a literal question' template, and do not make a gaze or smile the key cue\n"
+    "- Do NOT add a whimsical decoy object (goofy, comical, or funny decoration, sticker, painting, umbrella) to support an 'amusement' distractor\n"
+    "- Do NOT make the correct answer the only option that ties together every planted detail; at least one distractor must also be consistent with most of the story and fail on exactly one fact"
+)
+
+_GROUNDED_DISTRACTOR_RULES = (
+    "- Every option may mention ONLY people, objects, and events that appear in the story; never invent a new character, motive, defect, or event inside an option\n"
+    "- Every option must be wrong because of a specific story fact, not because it introduces unsupported information\n"
+    "- Match the certainty and hedging style across options: if one option expresses uncertainty, the others must use comparable epistemic framing"
+)
 
 
 def _build_interleaved_difficulty_schedule(
@@ -866,6 +895,14 @@ def build_stage2_generation_from_report_prompt(
         format_specific_rules = f"Provide exactly {fmt['n_correct']} Correct_Answer and {n_wrong} Wrong_Answer item(s)."
 
     difficulty_specific_rules = _DIFFICULTY_RULES.get(difficulty, _DIFFICULTY_RULES["medium"])
+    if difficulty == "hard":
+        channel = _EVIDENCE_CHANNELS[variant_index % len(_EVIDENCE_CHANNELS)]
+        difficulty_specific_rules = difficulty_specific_rules.format(
+            anti_template_rules=_ANTI_TEMPLATE_RULES.format(channel=channel),
+            grounded_distractor_rules=_GROUNDED_DISTRACTOR_RULES,
+        )
+    else:
+        difficulty_specific_rules += "\n" + _GROUNDED_DISTRACTOR_RULES
     distractor_strategy = _DISTRACTOR_STRATEGY_BY_OPERATION.get(
         primary_op,
         "Wrong answers must be the answer a model gives when it shortcuts the required cognitive operation. "

@@ -95,6 +95,59 @@ def _find_explicit_signpost(story: str) -> Optional[str]:
     return None
 
 
+_GAZE_CUE_RE = re.compile(
+    r"\b(?:caught|catches|catching)\s+\w+(?:'s)?\s+eye\b|\bglanc\w*\s+(?:pointedly\s+|briefly\s+)?(?:toward|towards|at)\b",
+    re.IGNORECASE,
+)
+_SMILE_CUE_RE = re.compile(r"\b(?:smil\w*|grin\w*|wink\w*)\b", re.IGNORECASE)
+_WHIMSICAL_DECOY_RE = re.compile(
+    r"\b(?:goofy|comical|whimsical|silly-looking|funny-looking|cartoonish)\b", re.IGNORECASE
+)
+_HEDGE_RE = re.compile(
+    r"\b(?:unsure|uncertain|not sure|not yet sure|unclear|wonders? whether|undecided)\b", re.IGNORECASE
+)
+_OPTION_NAME_RE = re.compile(r"\b[A-Z][a-z]{2,}\b")
+_OPTION_NAME_STOPWORDS = {
+    "She", "Her", "His", "They", "The", "This", "That", "Then", "When", "While", "Because",
+    "Since", "After", "Before", "Only", "Both", "Neither", "Either", "Go", "Ask", "Take",
+    "Head", "Walk", "Set", "Step", "Return", "Open", "Stay", "Wheel", "Plug", "Restart",
+    "Inspect", "Shift", "Relieve", "Trade", "To", "Tell", "Keep", "Let", "Wait", "Leave",
+}
+
+
+def _find_template_issue(story: str, q_dict: Dict[str, Any]) -> Optional[str]:
+    """Detect the over-used gaze/smile template and whimsical decoy objects in hard items."""
+    sentences = [s for s in re.split(r"(?<=[.!?\"”])\s+", story.strip()) if s.strip()]
+    tail = " ".join(sentences[-2:])
+    target = str(q_dict.get("_target_moment") or "")
+    for segment in (tail, target):
+        if segment and _GAZE_CUE_RE.search(segment) and _SMILE_CUE_RE.search(segment):
+            return "gaze_smile_template_cue_rewrite_with_assigned_evidence_channel"
+    if _WHIMSICAL_DECOY_RE.search(story):
+        return "whimsical_decoy_object_remove_amusement_red_herring"
+    return None
+
+
+def _find_option_grounding_issue(story: str, correct: List[str], wrong: List[str]) -> Optional[str]:
+    """Reject options that introduce unseen named entities or break hedging symmetry."""
+    options = correct + wrong
+    for opt in options:
+        for m in _OPTION_NAME_RE.finditer(opt):
+            name = m.group(0)
+            # 句首大写词（如 "Proud and relieved"）不是专名，只检查句中的大写词。
+            before = opt[: m.start()].rstrip()
+            if not before or before[-1] in ".!?;:\"'“‘(—-":
+                continue
+            if name in _OPTION_NAME_STOPWORDS:
+                continue
+            if not re.search(rf"\b{re.escape(name)}\b", story):
+                return "option_introduces_entity_absent_from_story"
+    hedged = [bool(_HEDGE_RE.search(opt)) for opt in options]
+    if sum(hedged) == 1:
+        return "single_hedged_option_match_certainty_style_across_options"
+    return None
+
+
 def _validate_synthesized_question(
     q_dict: Dict[str, Any],
     dataset_name: str,
@@ -122,6 +175,9 @@ def _validate_synthesized_question(
         target_compact = re.sub(r"\s+", " ", target_moment).strip()
         if not story_compact.endswith(target_compact):
             return "story_continues_after_target_moment"
+        template_issue = _find_template_issue(story, q_dict)
+        if template_issue:
+            return template_issue
 
     if dataset_name == "ToMBench":
         answer = q_dict.get("answer") or {}
@@ -141,6 +197,9 @@ def _validate_synthesized_question(
         avg_w = sum(len(w) for w in wrong) / len(wrong)
         if clen >= 24 and max_w > 0 and clen > 1.45 * max_w and clen > 1.65 * avg_w:
             return "correct_option_significantly_longer_than_distractors_match_option_lengths"
+        grounding_issue = _find_option_grounding_issue(story, correct, wrong)
+        if grounding_issue:
+            return grounding_issue
 
     return None
 
@@ -763,12 +822,14 @@ def synthesize_from_reports(
         f"{total_target} target questions, schema={output_schema.__name__}"
     )
 
-    # pending_pairs: list of (report_idx, sample_idx)，跳过已生成的 pair
+    # pending_pairs: list of (report_idx, sample_idx)，跳过已生成的 pair。
+    # 按 sample_idx 外层、report_idx 内层排列：中断或部分运行时先覆盖所有报告（含 zh 报告），
+    # 而不是把同一份报告的全部变体集中生成，避免候选集被少数报告的模板主导。
     _skip = existing_pairs or set()
     pending_pairs: List[Tuple[int, int]] = [
         (r_idx, s_idx)
-        for r_idx in range(len(reports))
         for s_idx in range(samples_per_report)
+        for r_idx in range(len(reports))
         if (r_idx, s_idx) not in _skip
     ]
     results: Dict[Tuple[int, int], Dict[str, Any]] = {}

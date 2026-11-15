@@ -541,3 +541,95 @@ def test_generation_prompt_omits_confirmation_constraints_from_report():
     prompt = build_stage2_generation_from_report_prompt(report, "ToMBench", target_difficulty="hard")
     assert "respond in a way that confirms" not in prompt
     assert "inferable only from the preceding context" in prompt
+
+
+def _hard_tombench_row(story, correct, wrong, target=None):
+    return {
+        "story": story,
+        "question": "At that moment, what does Nora intend?",
+        "answer": {"correct_answers": [correct], "wrong_answers": wrong},
+        "meta": {"id": "s1"},
+        "_target_moment": target if target is not None else story.split(". ")[-1],
+    }
+
+
+def test_hard_tombench_rejects_gaze_smile_template():
+    story = (
+        "Nora hid the watch in the owl box while Claire was downstairs. "
+        'Nora caught Owen\'s eye, smiled toward the side table, and asked, "Isn\'t that box cheerful?"'
+    )
+    row = _hard_tombench_row(
+        story,
+        "Prompt Owen to bring the box holding the watch",
+        ["Ask Owen whether the box looks cheerful", "Joke with Owen about the box design", "Ask Owen to move the box aside"],
+        target='Nora caught Owen\'s eye, smiled toward the side table, and asked, "Isn\'t that box cheerful?"',
+    )
+    assert _validate_synthesized_question(row, "ToMBench", difficulty="hard") == (
+        "gaze_smile_template_cue_rewrite_with_assigned_evidence_channel"
+    )
+
+
+def test_hard_tombench_rejects_whimsical_decoy_and_lone_hedge():
+    story = "A goofy frog umbrella hung by the door. Nora read the revised schedule."
+    row = _hard_tombench_row(
+        story,
+        "She expects the meeting at noon",
+        ["She expects the meeting at ten", "She expects the meeting at two", "She expects the meeting at four"],
+    )
+    assert _validate_synthesized_question(row, "ToMBench", difficulty="hard") == (
+        "whimsical_decoy_object_remove_amusement_red_herring"
+    )
+
+    story = "Nora read the first page of the revised schedule."
+    row = _hard_tombench_row(
+        story,
+        "She is unsure whether the meeting moved",
+        ["She is certain the meeting is at ten", "She is certain the meeting is at two", "She is certain it was cancelled"],
+    )
+    assert _validate_synthesized_question(row, "ToMBench", difficulty="hard") == (
+        "single_hedged_option_match_certainty_style_across_options"
+    )
+
+
+def test_tombench_rejects_option_with_unseen_named_entity():
+    story = "Nora read the first page of the revised schedule."
+    row = _hard_tombench_row(
+        story,
+        "She thinks the meeting is at noon",
+        ["She thinks Miriam cancelled it", "She thinks the meeting is at two", "She thinks the meeting is at four"],
+    )
+    assert _validate_synthesized_question(row, "ToMBench", difficulty="hard") == (
+        "option_introduces_entity_absent_from_story"
+    )
+
+
+def test_hard_prompt_rotates_evidence_channel_and_forbids_templates():
+    from feedback.prompts import _EVIDENCE_CHANNELS
+
+    report = {"dimension": "d", "primary_cognitive_operation": "pragmatic_inference", "_meta": {"lang": "en"}}
+    p0 = build_stage2_generation_from_report_prompt(report, "ToMBench", variant_index=0, target_difficulty="hard")
+    p1 = build_stage2_generation_from_report_prompt(report, "ToMBench", variant_index=1, target_difficulty="hard")
+    assert _EVIDENCE_CHANNELS[0] in p0 and _EVIDENCE_CHANNELS[1] not in p0
+    assert _EVIDENCE_CHANNELS[1] in p1
+    assert "catches eye / glances toward X / smiles" in p0
+    assert "never invent a new character" in p0
+
+
+def test_synthesis_covers_every_report_before_second_variant(monkeypatch):
+    import feedback.stage3_synthesis as s3
+
+    seen = []
+
+    class FakeClient:
+        def batch_generate_structure(self, prompts, schema, mode, desc):
+            return [None for _ in prompts]
+
+    def fake_prompt(**kwargs):
+        seen.append((kwargs["report"]["id"], kwargs["variant_index"]))
+        return "p"
+
+    monkeypatch.setattr(s3.runner, "create_llm_client", lambda cfg: FakeClient())
+    monkeypatch.setattr(s3, "build_stage2_generation_from_report_prompt", fake_prompt)
+    reports = [{"id": i, "_meta": {"lang": "en"}} for i in range(3)]
+    s3.synthesize_from_reports(reports, "ToMBench", {}, samples_per_report=2, max_retries=1)
+    assert seen == [(0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (2, 1)]
