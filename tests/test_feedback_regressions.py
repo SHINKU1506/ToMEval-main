@@ -323,6 +323,28 @@ def test_hard_synthesis_rejects_explicit_isolation_signposts():
     assert _validate_synthesized_question(sample, "ToMBench", difficulty="medium") is None
 
 
+def test_hard_prompt_and_easy_repair_enforce_cot_hardening_rules():
+    from filter.repair.repair_prompts import REPAIR_EASY_PROMPT
+
+    report = {
+        "dimension": "Belief: Content false beliefs",
+        "common_error_patterns": ["Agent A misreads a partial cue."],
+        "primary_cognitive_operation": "belief_state_update",
+        "difficulty_distribution": {"hard": 1.0},
+    }
+    prompt = build_stage2_generation_from_report_prompt(
+        report,
+        "ToMBench",
+        target_difficulty="hard",
+    )
+    assert "Partial Knowledge + Misleading Attribution" in prompt
+    assert "Competing Cross-Dimension Conflict" in prompt
+    assert "NEVER write explicit boolean signposts" in prompt
+    assert "NO SPOILER / STOP AT TARGET MOMENT" in prompt
+    assert "truncated messages" in REPAIR_EASY_PROMPT
+    assert "partial" in REPAIR_EASY_PROMPT.lower()
+
+
 def test_stage1_preserves_multiple_prediction_letters():
     assert _extract_letters(r"\boxed{A,C}") == ["A", "C"]
     assert _is_correct(r"\boxed{A,C}", ["A", "C"], prompt_type="mcq_multi")

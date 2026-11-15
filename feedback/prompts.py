@@ -527,33 +527,31 @@ def build_batch_diagnosis_prompt(
 # 干扰项设计原则（按认知操作类型）
 _DISTRACTOR_STRATEGY_BY_OPERATION: Dict[str, str] = {
     "belief_state_update": (
-        "Primary trap: use the REAL-WORLD current state as the main wrong answer. "
-        "A model that fails to update the agent's belief (and instead outputs world truth) will pick this. "
-        "Secondary trap (if multiple wrong answers): use a third agent's belief state."
+        "Primary trap: give the agent PARTIAL knowledge (e.g. seeing an intermediate move or ambiguous update) "
+        "so a CoT solver that only tracks 0/1 absence or defaults to world truth picks the wrong intermediate or current state. "
+        "Secondary trap (if multiple wrong answers): use a third agent's outdated belief state."
     ),
     "perspective_taking": (
-        "Primary trap: use what IS actually true from an omniscient view as a wrong answer. "
-        "A model that can't take the specific agent's viewpoint defaults to the objective truth. "
-        "Secondary trap: use what a different agent (not the queried one) believes."
+        "Primary trap: create a preference/goal collision where Agent A acts on another agent's preference while "
+        "unaware an upstream constraint changed; wrong answers include what IS omnisciently optimal, Agent A's own unused "
+        "preference, and a third agent's unshared backup choice."
     ),
     "information_access": (
-        "Primary trap: use the ground truth (omniscient/full-context answer) as a wrong answer — "
-        "a model that doesn't filter by who-knows-what will confidently pick this. "
-        "Secondary trap: use what a well-informed agent who DID have access would answer."
+        "Primary trap: combine genuine partial cues (an overheard fragment, a routine reset, or an unattributed object) "
+        "with ground-truth reality so a model confuses partial exposure with full knowledge. "
+        "Secondary trap: what an informed insider would know."
     ),
     "recursive_belief": (
-        "Primary trap: answer one level shallower than asked "
-        "(e.g., for 'what does A think B believes', trap = what B actually believes, not A's model of B). "
-        "Secondary trap: use the ground truth."
+        "Primary trap: answer one level shallower than asked OR rely on partial secondhand evidence that Agent A "
+        "reasonably misreads about Agent B (not pure zero-exposure); secondary trap: the ground truth or A's own private belief."
     ),
     "emotion_attribution": (
-        "Primary trap: use an emotion with the SAME valence but from a DIFFERENT trigger or context "
-        "(e.g., if 'grief' is correct due to loss, 'disappointment-from-failure' is a trap). "
-        "Secondary trap: use an emotion with opposite valence that ignores the key situational detail."
+        "Primary trap: pair a strong emotional trigger with a competing social/role duty so the model must weigh "
+        "regulation vs outward display; distractors use same-valence emotion from the wrong trigger or unrestrained impulsive action."
     ),
     "social_inference": (
-        "Primary trap: use the superficially logical or literal action (ignoring social norms/implications). "
-        "A model that doesn't infer social context defaults to the surface-level 'obvious' action."
+        "Primary trap: set a conflict between literal courtesy/duty and an underlying personal tension or unstated constraint; "
+        "wrong answers include the face-value routine response and an exaggerated reaction ignoring role constraints."
     ),
     "temporal_reference": (
         "Primary trap: answer 'what to do before/after the WRONG sub-event' — "
@@ -561,20 +559,19 @@ _DISTRACTOR_STRATEGY_BY_OPERATION: Dict[str, str] = {
         "Secondary trap: use a semantically adjacent but chronologically displaced step."
     ),
     "pragmatic_inference": (
-        "Primary trap: the LITERAL / face-value interpretation of the utterance as a wrong answer. "
-        "A model that doesn't infer implicature, hints, or indirect meaning picks the literal reading."
+        "Primary trap: the LITERAL / face-value interpretation OR an over-read hint without stopping at the exact utterance; "
+        "never narrate the speaker's follow-up execution after the utterance."
     ),
     "causal_reasoning": (
-        "Primary trap: reverse the cause-effect direction (swap cause and effect) as a wrong answer. "
-        "Secondary trap: use a plausible intermediate step that is not the actual cause."
+        "Primary trap: indirect causal chain break — surface symptoms match an obvious local cause, while the true upstream "
+        "cause lies in an earlier dependency; distractors include both the surface symptom fix and reversed cause-effect."
     ),
     "referent_resolution": (
-        "Primary trap: use a different syntactically plausible referent for the pronoun/deictic term. "
-        "Make sure multiple referents are genuinely ambiguous from the surface form."
+        "Primary trap: use a different syntactically and contextually plausible referent supported by an earlier recency cue."
     ),
     "common_sense_normative": (
-        "Primary trap: use a response that is factually accurate but socially inappropriate in context. "
-        "Secondary trap: a response that seems correct in isolation but violates the specific social norm being tested."
+        "Primary trap: pit procedural correctness against acute interpersonal distress or unspoken social norms; "
+        "distractors include technically accurate rules that misjudge social appropriateness."
     ),
 }
 
@@ -593,14 +590,14 @@ _DIFFICULTY_RULES: Dict[str, str] = {
         "At least one distractor should require reading two-thirds of the story to realize it is wrong."
     ),
     "hard": (
-        "Hard difficulty rules:\n"
-        "- Story: 5-8 sentences, at least 3 agents, with overlapping and conflicting partial knowledge states\n"
-        "- Include at least two sequential information updates where physical timing, departures, or truncated interactions leave different agents with incomplete views\n"
+        "Hard difficulty rules (engineered against strong CoT reasoning models):\n"
+        "- Story: 5-8 sentences, at least 3 agents, with overlapping and competing partial knowledge states\n"
+        "- Partial Knowledge + Misleading Attribution: instead of giving the target agent zero access, give them a genuine partial observation or ambiguous secondhand cue that makes a flawed attribution initially plausible unless CoT reconciles event order and source limits\n"
+        "- Competing Cross-Dimension Conflict: anchor the dilemma in at least one high-tension conflict — (a) preference/constraint collision, (b) indirect upstream causal link behind a misleading surface symptom, or (c) suppressed emotion / social-norm duty tested via concrete action rather than a bare label\n"
+        "- Include at least two sequential updates where physical timing, departures, or truncated interactions leave different agents with asymmetric views\n"
         "- NEVER write explicit boolean signposts such as 'working completely alone', 'without telling anyone', 'having spoken to neither', 'without mentioning', 'privately discovered', 'out of earshot', '独自一人', '没有告诉任何人', '未向任何人提起', or '毫不知情' — convey access boundaries implicitly through concrete actions and timing\n"
-        "- Include one true but misleading cue or background constraint, not random filler\n"
-        "- The question must target one primary cognitive operation and one precise time point\n"
-        "- Wrong options: at least one matches the REAL-WORLD truth (trapping agents who ignore perspective), "
-        "at least one matches what a different agent would believe"
+        "- The question must target one primary cognitive operation at one exact moment, and stop the narrative right there without post-query spoilers\n"
+        "- Wrong options: balance length/detail across all options; include the omniscient truth, an intermediate/partial-cue trap, and another agent's competing belief"
     ),
 }
 

@@ -77,11 +77,13 @@ Original sample (too easy):
   Marked wrong:   {wrong_answers}
 
 Repair goal:
-  - Increase ToM reasoning depth: introduce one extra belief layer, asymmetric information, or a state change \
-the agent did NOT witness.
-  - The story must remain self-contained and the question must still have exactly one correct answer.
-  - Keep the same agents and the same general scenario; only deepen the ToM demand.
-  - Distractors should now be more plausible (close-but-wrong reasoning paths), not random fillers.
+  - Increase CoM/ToM reasoning depth against strong CoT models: replace simple 0-access setups with partial \
+knowledge plus a plausible misleading observation/cue, or introduce a competing preference/norm/indirect-causal conflict.
+  - Convey who witnessed what implicitly via physical timing, departures, or truncated messages — NEVER write \
+explicit boolean signposts such as 'completely alone', 'without telling anyone', 'without mentioning', or 'having spoken to neither'.
+  - End the story at the exact queried moment with NO subsequent spoiler action/reply, and keep only one unambiguous answer.
+  - You may add an intermediary agent or restructure event order to deepen the reasoning dilemma while preserving the core characters/domain.
+  - Distractors must be balanced in length/specificity and correspond to close-but-wrong CoT reasoning paths.
 
 """ + _SHARED_OUTPUT_SCHEMA
 
