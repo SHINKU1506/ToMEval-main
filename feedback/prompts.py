@@ -28,12 +28,13 @@ SYNTHESIS_FORMAT_REGISTRY: Dict[str, Dict[str, Any]] = {
         "complexity_hint": (
             "Story: medium uses 3-6 sentences; hard uses 5-8 sentences (100-500 words), "
             "at least 3 named agents, and an everyday social scenario. Hard stories must include "
-            "at least two information updates, one agent absent from a key state change, explicit "
-            "who-saw-what boundaries, one true but answer-irrelevant red herring, and one distractor "
-            "for a shallow or omniscient shortcut. "
+            "at least two information updates, natural scene-driven access gaps (e.g. a departed agent, "
+            "a partial message, or visual occlusion — NEVER meta-signposts like 'working completely alone' "
+            "or 'without telling anyone'), one true misleading cue, and distractors aligned with "
+            "competing CoT reasoning failures. "
             "Covers: false beliefs, intentions, non-literal communication (faux pas/irony/white lies), second-order beliefs. "
             "Style: natural English prose, use Western-style names. "
-            "Question: asks about one agent's mental state, belief, or intention."
+            "Question: asks about one agent's mental state, belief, or intention at one exact moment."
         ),
         "json_skeleton": {
             "questions": [{
@@ -593,12 +594,11 @@ _DIFFICULTY_RULES: Dict[str, str] = {
     ),
     "hard": (
         "Hard difficulty rules:\n"
-        "- Story: 5-8 sentences, at least 3 agents, with overlapping but distinct knowledge states\n"
-        "- Include at least two sequential information updates where only some agents are present\n"
-        "- State explicitly who witnessed each key change and who only received a partial report\n"
-        "- Include one true but answer-irrelevant red herring, not random filler\n"
+        "- Story: 5-8 sentences, at least 3 agents, with overlapping and conflicting partial knowledge states\n"
+        "- Include at least two sequential information updates where physical timing, departures, or truncated interactions leave different agents with incomplete views\n"
+        "- NEVER write explicit boolean signposts such as 'working completely alone', 'without telling anyone', 'having spoken to neither', 'without mentioning', 'privately discovered', 'out of earshot', '独自一人', '没有告诉任何人', '未向任何人提起', or '毫不知情' — convey access boundaries implicitly through concrete actions and timing\n"
+        "- Include one true but misleading cue or background constraint, not random filler\n"
         "- The question must target one primary cognitive operation and one precise time point\n"
-        "- At least three hard constraints must be satisfied: information boundary, red herring, and shortcut distractor\n"
         "- Wrong options: at least one matches the REAL-WORLD truth (trapping agents who ignore perspective), "
         "at least one matches what a different agent would believe"
     ),
@@ -747,6 +747,30 @@ def _build_interleaved_difficulty_schedule(
     return schedule or ["medium"]
 
 
+def resolve_variant_difficulty(
+    report: Dict[str, Any],
+    variant_index: int = 0,
+    target_difficulty: str = "",
+    difficulty_weights: Optional[Dict[str, float]] = None,
+    schedule_index: Optional[int] = None,
+) -> str:
+    """Resolve the target difficulty label ('hard'|'medium'|'easy') for one variant."""
+    difficulty_distribution = report.get("difficulty_distribution", {})
+    policy = str(report.get("difficulty_policy") or "weighted")
+    default_hard_mix = {"hard": 0.70, "medium": 0.25, "easy": 0.05}
+    weights = difficulty_weights or default_hard_mix
+    sched_idx = variant_index if schedule_index is None else schedule_index
+    effective_mode = target_difficulty or policy
+    if effective_mode in ("hard", "hard_only"):
+        return "hard"
+    if effective_mode == "hard_mix":
+        schedule = _build_interleaved_difficulty_schedule(weights)
+        return schedule[sched_idx % len(schedule)]
+    selected = difficulty_weights or difficulty_distribution or default_hard_mix
+    schedule = _build_interleaved_difficulty_schedule(selected)
+    return schedule[sched_idx % len(schedule)]
+
+
 def build_stage2_generation_from_report_prompt(
     report: Dict[str, Any],
     dataset_name: str,
@@ -792,19 +816,13 @@ def build_stage2_generation_from_report_prompt(
     # Also avoid front-loading 'hard' slots when indexing by per-report variant_index.
     difficulty_distribution = report.get("difficulty_distribution", {})
     policy = str(report.get("difficulty_policy") or "weighted")
-    default_hard_mix = {"hard": 0.70, "medium": 0.25, "easy": 0.05}
-    weights = difficulty_weights or default_hard_mix
-    sched_idx = variant_index if schedule_index is None else schedule_index
-    effective_mode = target_difficulty or policy
-    if effective_mode in ("hard", "hard_only"):
-        difficulty = "hard"
-    elif effective_mode == "hard_mix":
-        schedule = _build_interleaved_difficulty_schedule(weights)
-        difficulty = schedule[sched_idx % len(schedule)]
-    else:
-        selected = difficulty_weights or difficulty_distribution or default_hard_mix
-        schedule = _build_interleaved_difficulty_schedule(selected)
-        difficulty = schedule[sched_idx % len(schedule)]
+    difficulty = resolve_variant_difficulty(
+        report=report,
+        variant_index=variant_index,
+        target_difficulty=target_difficulty,
+        difficulty_weights=difficulty_weights,
+        schedule_index=schedule_index,
+    )
 
     primary_op = str(report.get("primary_cognitive_operation", "belief_state_update"))
 

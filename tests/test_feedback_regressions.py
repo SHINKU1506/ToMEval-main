@@ -309,6 +309,20 @@ def test_stage3_validator_rejects_length_bias_and_retries(monkeypatch):
     assert len(results) == 1
 
 
+def test_hard_synthesis_rejects_explicit_isolation_signposts():
+    sample = {
+        "story": "Alex stayed in the room working completely alone and swapped the jars without telling anyone.",
+        "question": "What does Maya expect inside the jar?",
+        "answer": {
+            "correct_answers": ["Sugar"],
+            "wrong_answers": ["Salt", "Flour", "Rice"],
+        },
+    }
+    err = _validate_synthesized_question(sample, "ToMBench", difficulty="hard")
+    assert err == "explicit_isolation_signpost_detected_rewrite_boundaries_implicitly"
+    assert _validate_synthesized_question(sample, "ToMBench", difficulty="medium") is None
+
+
 def test_stage1_preserves_multiple_prediction_letters():
     assert _extract_letters(r"\boxed{A,C}") == ["A", "C"]
     assert _is_correct(r"\boxed{A,C}", ["A", "C"], prompt_type="mcq_multi")

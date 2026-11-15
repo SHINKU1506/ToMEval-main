@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src import runner
 from .prompts import (
     build_stage2_generation_from_report_prompt,
+    resolve_variant_difficulty,
     SYNTHESIS_FORMAT_REGISTRY,
     DATASET_SKILL_REGISTRY,
     _sombench_parse_dim,
@@ -72,11 +73,34 @@ def _parse_existing_pair_id(meta_id: str) -> Optional[Tuple[int, int]]:
     return int(match.group(1)), int(match.group(2))
 
 
+_HARD_SIGNPOST_PATTERNS = (
+    re.compile(r"\bcompletely alone\b", re.IGNORECASE),
+    re.compile(r"\bwithout telling anyone\b", re.IGNORECASE),
+    re.compile(r"\bwithout mentioning\b", re.IGNORECASE),
+    re.compile(r"\bhaving spoken to neither\b", re.IGNORECASE),
+    re.compile(r"\b(?:spoke|talked|told) to neither\b", re.IGNORECASE),
+    re.compile(r"\btold neither\b", re.IGNORECASE),
+    re.compile(r"\bprivately (?:discovered|noticed|learned|checked|knew)\b", re.IGNORECASE),
+    re.compile(r"\bout of earshot\b", re.IGNORECASE),
+    re.compile(r"独自一人|没有告诉任何人|未告诉任何人|未向任何人提起|毫不知情|完全不知情"),
+)
+
+
+def _find_explicit_signpost(story: str) -> Optional[str]:
+    """Return the matched boolean isolation signpost if present, else None."""
+    for pat in _HARD_SIGNPOST_PATTERNS:
+        m = pat.search(story)
+        if m:
+            return m.group(0)
+    return None
+
+
 def _validate_synthesized_question(
     q_dict: Dict[str, Any],
     dataset_name: str,
+    difficulty: str = "",
 ) -> Optional[str]:
-    """Validate structural integrity and option length symmetry of a candidate.
+    """Validate structural integrity, anti-signpost rules, and option symmetry.
 
     Returns a short failure reason string for retry feedback, or None when valid.
     """
@@ -84,6 +108,9 @@ def _validate_synthesized_question(
     question = str(q_dict.get("question") or "").strip()
     if not story or not question:
         return "empty_story_or_question"
+
+    if difficulty == "hard" and _find_explicit_signpost(story) is not None:
+        return "explicit_isolation_signpost_detected_rewrite_boundaries_implicitly"
 
     if dataset_name == "ToMBench":
         answer = q_dict.get("answer") or {}
@@ -800,9 +827,16 @@ def synthesize_from_reports(
                         q_rows = [q.to_storage_dict()]
                     else:
                         q_rows = [q if isinstance(q, dict) else dict(q)]
+                    pair_difficulty = resolve_variant_difficulty(
+                        report=reports[r_idx],
+                        variant_index=s_idx,
+                        target_difficulty=target_difficulty,
+                        difficulty_weights=difficulty_weights,
+                        schedule_index=r_idx * samples_per_report + s_idx,
+                    )
                     validation_error = None
                     for row_idx, q_dict in enumerate(q_rows):
-                        err = _validate_synthesized_question(q_dict, dataset_name)
+                        err = _validate_synthesized_question(q_dict, dataset_name, difficulty=pair_difficulty)
                         if err:
                             validation_error = err
                             break
