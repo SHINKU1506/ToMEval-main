@@ -138,6 +138,11 @@ def _validate_synthesized_question(
 
 # ---- ToMBench ----
 class ToMBenchQuestionFlat(BaseModel):
+    reasoning_trap_plan: str = Field(
+        default="",
+        description="Pre-drafting plan (stripped before storage): state (1) target agent's partial observations vs hidden updates, "
+                    "(2) plausible misleading cue, (3) what flawed reasoning path each distractor exploits. Do NOT copy into story/question.",
+    )
     story: str = Field(description="Complete story text as a plain string")
     question: str = Field(
         description="Question text with all 4 answer options embedded inline, "

@@ -345,6 +345,30 @@ def test_hard_prompt_and_easy_repair_enforce_cot_hardening_rules():
     assert "partial" in REPAIR_EASY_PROMPT.lower()
 
 
+def test_tombench_schema_plans_before_story_and_strips_plan_on_storage():
+    from feedback.prompts import SYNTHESIS_FORMAT_REGISTRY
+
+    fields = list(ToMBenchQuestionFlat.model_fields.keys())
+    assert fields[0] == "reasoning_trap_plan"
+    skeleton_keys = list(SYNTHESIS_FORMAT_REGISTRY["ToMBench"]["json_skeleton"]["questions"][0].keys())
+    assert skeleton_keys[0] == "reasoning_trap_plan"
+
+    q = ToMBenchQuestionFlat(
+        reasoning_trap_plan="Obs vs hidden swap; C=omniscient truth.",
+        story="Short natural story.",
+        question="What does Sam expect? A. Tea B. Coffee C. Cocoa D. Milk",
+        correct_letter="A",
+        meta_ability="false_belief",
+        meta_id="s1",
+    )
+    stored = q.to_storage_dict()
+    assert "reasoning_trap_plan" not in stored
+    assert stored["answer"] == {
+        "correct_answers": ["Tea"],
+        "wrong_answers": ["Coffee", "Cocoa", "Milk"],
+    }
+
+
 def test_stage1_preserves_multiple_prediction_letters():
     assert _extract_letters(r"\boxed{A,C}") == ["A", "C"]
     assert _is_correct(r"\boxed{A,C}", ["A", "C"], prompt_type="mcq_multi")
