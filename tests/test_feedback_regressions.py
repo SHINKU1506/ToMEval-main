@@ -807,3 +807,96 @@ def test_stage3_prompt_encodes_review72_rules_and_rotates_by_schedule_index():
     assert "NEVER narrate the queried mental state" in p_a
     assert "0.80x-1.20x" in p_a
     assert "bundle two independent claims" in p_a
+
+
+def test_stage3_bilingual_validators_footer_strip_and_metadata_preservation(monkeypatch):
+    from types import SimpleNamespace
+    import feedback.stage3_synthesis as stage3
+
+    q = ToMBenchQuestionFlat(
+        target_moment="程悦看向桌上的罐子。",
+        story="程悦看向桌上的罐子。",
+        question=(
+            "许文预期罐子里装的是什么？ "
+            "A. Room B. 里的咖啡豆 "
+            "B. 燕麦片 "
+            "C. 绿茶包\n请选择正确答案。 "
+            "D. 红茶包"
+        ),
+        correct_letter="A",
+        meta_ability="theory_of_mind",
+        meta_id="s1",
+    )
+    stored = q.to_storage_dict()
+    assert stored["answer"]["correct_answers"] == ["Room B. 里的咖啡豆"]
+    assert "请选择正确答案" not in stored["answer"]["wrong_answers"][1]
+
+    zh_leak = {
+        "story": "顾清离开后，沈舟换了标签，顾清误以为里面还是红茶。",
+        "question": "顾清以为里面是什么？",
+        "answer": {"correct_answers": ["红茶"], "wrong_answers": ["绿茶", "花茶", "白茶"]},
+        "_target_moment": "顾清误以为里面还是红茶。",
+    }
+    assert _validate_synthesized_question(zh_leak, "ToMBench", difficulty="hard") == (
+        "explicit_isolation_signpost_detected_rewrite_boundaries_implicitly"
+    )
+
+    zh_gaze = {
+        "story": "顾清与沈舟对视一眼后微笑着指了指茶杯，问大家要不要加茶。",
+        "question": "顾清的真实意图是什么？",
+        "answer": {"correct_answers": ["提醒收拾茶杯"], "wrong_answers": ["夸奖茶杯好看", "询问茶水温度", "推荐新款茶叶"]},
+        "_target_moment": "顾清与沈舟对视一眼后微笑着指了指茶杯，问大家要不要加茶。",
+    }
+    assert _validate_synthesized_question(zh_gaze, "ToMBench", difficulty="hard") == (
+        "gaze_smile_template_cue_rewrite_with_assigned_evidence_channel"
+    )
+
+    meta_long = {
+        "story": "Two jars stood on the shelf.",
+        "question": "Which jar does she mean?",
+        "answer": {
+            "correct_answers": ["Cannot tell which jar; she must pick at random"],
+            "wrong_answers": [
+                "The left terracotta jar on the top",
+                "The blue ceramic jar on the middle",
+                "The green glass jar on the bottom",
+            ],
+        },
+        "_target_moment": "Two jars stood on the shelf.",
+    }
+    assert _validate_synthesized_question(meta_long, "ToMBench", difficulty="hard") == (
+        "indeterminacy_meta_option_longer_than_distractors"
+    )
+
+    class FakeClient:
+        def batch_generate_structure(self, prompts, schema, mode="auto", desc=""):
+            item = ToMBenchQuestionFlat(
+                target_moment="沈舟把茶叶罐放回最上层。",
+                story="顾清看到标签后走了出去，沈舟把茶叶罐放回最上层。",
+                question="顾清认为罐子里是什么？",
+                correct_letter="A",
+                options={"A": "花茶", "B": "绿茶", "C": "红茶", "D": "白茶"},
+                meta_ability="theory_of_mind",
+                meta_difficulty="hard",
+                meta_id="s1",
+            )
+            return [SimpleNamespace(content=SimpleNamespace(questions=[item])) for _ in prompts]
+
+    monkeypatch.setattr(stage3.runner, "create_llm_client", lambda cfg: FakeClient())
+    rows, stats = synthesize_from_reports(
+        reports=[{
+            "dimension": "Belief: Content false beliefs__zh",
+            "primary_cognitive_operation": "belief_state_update",
+            "_meta": {"dimension": "Belief: Content false beliefs__zh", "lang": "zh"},
+        }],
+        dataset_name="ToMBench",
+        synthesis_llm_config={"model_name": "test"},
+        samples_per_report=1,
+        max_retries=1,
+        target_difficulty="hard",
+    )
+    assert stats["succeeded"] == 1
+    assert rows[0]["meta"]["dimension"] == ["Belief: Content false beliefs__zh"]
+    assert rows[0]["meta"]["report_dimension"] == "Belief: Content false beliefs__zh"
+    assert rows[0]["meta"]["primary_cognitive_operation"] == "belief_state_update"
+    assert rows[0]["meta"]["difficulty"] == "hard"

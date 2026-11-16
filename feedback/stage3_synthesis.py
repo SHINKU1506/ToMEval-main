@@ -31,6 +31,19 @@ from .prompts import (
 logger = logging.getLogger(__name__)
 
 
+_MCQ_FOOTER_RE = re.compile(
+    r"(?:\n|\s)+(?:请选择(?:正确答案|最合适的一项)|Please\s+(?:select|choose)\s+the\s+(?:correct|best)\s+answer|正确答案\s*[:：]).*$",
+    re.DOTALL | re.IGNORECASE,
+)
+
+_OPTION_MARKER_GUARD = r"(?<!Room\s)(?<!Grade\s)(?<!Type\s)(?<!Plan\s)(?<!Option\s)(?<![A-Za-z])"
+
+
+def _strip_mcq_footer(text: str) -> str:
+    """Remove trailing prompt-leak instructions such as '\\n请选择正确答案。'."""
+    return _MCQ_FOOTER_RE.sub("", str(text or "")).strip()
+
+
 def _parse_options_from_question(q_text: str, correct_letter: str):
     """从内嵌选项的 question 文本中解析正确答案和错误答案文本。
 
@@ -39,9 +52,12 @@ def _parse_options_from_question(q_text: str, correct_letter: str):
     """
     correct_letter = correct_letter.strip().upper()
     options_map: dict = {}
-    pattern = re.compile(r'(?<![A-Za-z])([A-D])[.．]\s*(.*?)(?=\s*[A-D][.．]|$)', re.DOTALL)
+    pattern = re.compile(
+        rf"{_OPTION_MARKER_GUARD}([A-D])[.．)]\s*(.*?)(?=\s*{_OPTION_MARKER_GUARD}[A-D][.．)]|$)",
+        re.DOTALL,
+    )
     for m in pattern.finditer(q_text):
-        options_map[m.group(1)] = m.group(2).strip()
+        options_map[m.group(1)] = _strip_mcq_footer(m.group(2))
     correct_text = options_map.get(correct_letter, correct_letter)
     wrong_texts = [v for k, v in sorted(options_map.items()) if k != correct_letter]
     return correct_text, wrong_texts
@@ -54,9 +70,9 @@ def _strip_embedded_options(q_text: str) -> str:
     question. The standardized evaluator renders options separately, so
     retaining that suffix creates two conflicting option blocks.
     """
-    match = re.search(r"(?<![A-Za-z])A[.．)]\s+", q_text, re.IGNORECASE)
+    match = re.search(rf"{_OPTION_MARKER_GUARD}A[.．)]\s+", q_text, re.IGNORECASE)
     if not match:
-        return q_text.strip()
+        return _strip_mcq_footer(q_text)
     return q_text[: match.start()].rstrip()
 
 
@@ -82,7 +98,15 @@ _HARD_SIGNPOST_PATTERNS = (
     re.compile(r"\btold neither\b", re.IGNORECASE),
     re.compile(r"\bprivately (?:discovered|noticed|learned|checked|knew)\b", re.IGNORECASE),
     re.compile(r"\bout of earshot\b", re.IGNORECASE),
-    re.compile(r"独自一人|没有告诉任何人|未告诉任何人|未向任何人提起|毫不知情|完全不知情"),
+    re.compile(r"\bunbeknownst to\b", re.IGNORECASE),
+    re.compile(r"\bwithout\s+\w+(?:'s)?\s+knowledge\b", re.IGNORECASE),
+    re.compile(r"\bdid not (?:know|realize)\b", re.IGNORECASE),
+    re.compile(r"\bnever (?:learned|realized|found out)\b", re.IGNORECASE),
+    re.compile(r"\bin reality\b", re.IGNORECASE),
+    re.compile(
+        r"独自一人|没有告诉任何人|未告诉任何人|未向任何人提起|毫不知情|完全不知情|"
+        r"误以为|浑然不知|并不知情|却不知道|全然不知|实际上|事实上"
+    ),
 )
 
 
@@ -96,15 +120,27 @@ def _find_explicit_signpost(story: str) -> Optional[str]:
 
 
 _GAZE_CUE_RE = re.compile(
-    r"\b(?:caught|catches|catching)\s+\w+(?:'s)?\s+eye\b|\bglanc\w*\s+(?:pointedly\s+|briefly\s+)?(?:toward|towards|at)\b",
+    r"\b(?:caught|catches|catching)\s+\w+(?:'s)?\s+eye\b|\bglanc\w*\s+(?:pointedly\s+|briefly\s+)?(?:toward|towards|at)\b|"
+    r"(?:眼神|目光|对视|瞥了[^，。！？]*一眼|使了个眼色)",
     re.IGNORECASE,
 )
-_SMILE_CUE_RE = re.compile(r"\b(?:smil\w*|grin\w*|wink\w*)\b", re.IGNORECASE)
+_SMILE_CUE_RE = re.compile(
+    r"\b(?:smil\w*|grin\w*|wink\w*)\b|(?:微笑|笑了笑|嘴角[^，。！？]*笑|相视一笑|眨了眨眼)",
+    re.IGNORECASE,
+)
 _WHIMSICAL_DECOY_RE = re.compile(
-    r"\b(?:goofy|comical|whimsical|silly-looking|funny-looking|cartoonish)\b", re.IGNORECASE
+    r"\b(?:goofy|comical|whimsical|silly-looking|funny-looking|cartoonish)\b|(?:滑稽|搞笑|卡通)",
+    re.IGNORECASE,
 )
 _HEDGE_RE = re.compile(
-    r"\b(?:unsure|uncertain|not sure|not yet sure|unclear|wonders? whether|undecided)\b", re.IGNORECASE
+    r"\b(?:unsure|uncertain|not sure|not yet sure|unclear|wonders? whether|undecided)\b|"
+    r"(?:不确定|拿不准|吃不准|说不准|不太确定|无法确定|判断不出)",
+    re.IGNORECASE,
+)
+_INDETERMINACY_META_RE = re.compile(
+    r"\b(?:cannot|can't)\s+(?:tell|identify|uniquely\s+identify|determine)\b|\bpick\s+(?:one\s+)?at\s+random\b|"
+    r"无法确定|无法判断|判断不出|随机选",
+    re.IGNORECASE,
 )
 _OPTION_NAME_RE = re.compile(r"\b[A-Z][a-z]{2,}\b")
 _OPTION_NAME_STOPWORDS = {
@@ -117,7 +153,11 @@ _OPTION_NAME_STOPWORDS = {
 
 def _find_template_issue(story: str, q_dict: Dict[str, Any]) -> Optional[str]:
     """Detect the over-used gaze/smile template and whimsical decoy objects in hard items."""
-    sentences = [s for s in re.split(r"(?<=[.!?\"”])\s+", story.strip()) if s.strip()]
+    sentences = [
+        s
+        for s in re.split(r"(?<=[.!?\"”])\s+|(?<=[。！？])\s*", story.strip())
+        if s.strip()
+    ]
     tail = " ".join(sentences[-2:])
     target = str(q_dict.get("_target_moment") or "")
     for segment in (tail, target):
@@ -195,8 +235,12 @@ def _validate_synthesized_question(
         clen = len(correct[0])
         max_w = max(len(w) for w in wrong)
         avg_w = sum(len(w) for w in wrong) / len(wrong)
-        if clen >= 24 and max_w > 0 and clen > 1.45 * max_w and clen > 1.65 * avg_w:
+        is_cjk = bool(re.search(r"[\u4e00-\u9fff]", correct[0]))
+        min_len_for_ratio = 10 if is_cjk else 24
+        if clen >= min_len_for_ratio and max_w > 0 and clen > 1.45 * max_w and clen > 1.65 * avg_w:
             return "correct_option_significantly_longer_than_distractors_match_option_lengths"
+        if _INDETERMINACY_META_RE.search(correct[0]) and avg_w > 0 and clen > 1.20 * avg_w:
+            return "indeterminacy_meta_option_longer_than_distractors"
         grounding_issue = _find_option_grounding_issue(story, correct, wrong)
         if grounding_issue:
             return grounding_issue
@@ -231,13 +275,29 @@ class ToMBenchQuestionFlat(BaseModel):
     meta_id: str = Field(
         description="Unique identifier for this question, e.g. 'synthetic_0001'"
     )
+    options: Optional[Dict[str, str]] = Field(
+        default=None,
+        description="Optional structured A/B/C/D options dict",
+    )
+    meta_difficulty: str = Field(
+        default="",
+        description="Target difficulty label: easy, medium, or hard",
+    )
 
     def to_storage_dict(self, synthesis_diagnosis=None) -> dict:
         q_text = self.question
-        correct_text, wrong_texts = _parse_options_from_question(q_text, self.correct_letter)
+        letter = self.correct_letter.strip().upper()
+        if isinstance(self.options, dict) and {k.upper() for k in self.options} >= {"A", "B", "C", "D"}:
+            norm_opts = {k.upper(): _strip_mcq_footer(v) for k, v in self.options.items()}
+            correct_text = norm_opts.get(letter, letter)
+            wrong_texts = [norm_opts[k] for k in ("A", "B", "C", "D") if k != letter]
+            clean_question = _strip_embedded_options(q_text)
+        else:
+            correct_text, wrong_texts = _parse_options_from_question(q_text, letter)
+            clean_question = _strip_embedded_options(q_text)
         stored = {
             "story": self.story,
-            "question": _strip_embedded_options(q_text),
+            "question": clean_question,
             "answer": {
                 "correct_answers": [correct_text],
                 "wrong_answers": wrong_texts,
@@ -248,6 +308,8 @@ class ToMBenchQuestionFlat(BaseModel):
                 "dimension": [self.meta_ability],
             },
         }
+        if self.meta_difficulty.strip():
+            stored["meta"]["difficulty"] = self.meta_difficulty.strip()
         if self.target_moment.strip():
             stored["_target_moment"] = self.target_moment.strip()
         return stored
@@ -926,6 +988,12 @@ def synthesize_from_reports(
                         difficulty_weights=difficulty_weights,
                         schedule_index=r_idx * samples_per_report + s_idx,
                     )
+                    report_dim = str(
+                        (reports[r_idx].get("_meta") or {}).get("dimension")
+                        or reports[r_idx].get("dimension")
+                        or ""
+                    ).strip()
+                    primary_op = str(reports[r_idx].get("primary_cognitive_operation") or "").strip()
                     validation_error = None
                     for row_idx, q_dict in enumerate(q_rows):
                         err = _validate_synthesized_question(q_dict, dataset_name, difficulty=pair_difficulty)
@@ -939,10 +1007,24 @@ def synthesize_from_reports(
                             meta["id"] = f"synthetic_{dataset_name.lower()}_{r_idx:03d}_{s_idx}_{subtype}"
                             meta.setdefault("history", [])
                             meta["lang"] = str((reports[r_idx].get("_meta") or {}).get("lang") or "en")
+                            meta["difficulty"] = pair_difficulty
+                            if report_dim:
+                                meta["report_dimension"] = report_dim
+                                if meta.get("dimension") == ["theory_of_mind"] or not meta.get("dimension"):
+                                    meta["dimension"] = [report_dim]
+                            if primary_op:
+                                meta["primary_cognitive_operation"] = primary_op
                     for q_dict in q_rows:
                         q_dict.pop("_target_moment", None)
                     if validation_error:
-                        last_failed[pair] = {"_failure_reason": validation_error}
+                        failed_payload = {"_failure_reason": validation_error}
+                        if q_rows:
+                            failed_payload.update({
+                                "story": q_rows[0].get("story"),
+                                "question": q_rows[0].get("question"),
+                                "answer": q_rows[0].get("answer"),
+                            })
+                        last_failed[pair] = failed_payload
                         continue
                     if difficulty_gate is not None and pair_difficulty in gate_difficulties:
                         gate_candidates[pair] = q_rows
