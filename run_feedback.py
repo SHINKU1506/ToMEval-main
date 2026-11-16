@@ -131,6 +131,8 @@ def run_pipeline(config_path: str):
     synthesis_batch_size = syn_config.get("synthesis_batch_size", 20)
     target_difficulty = str(syn_config.get("target_difficulty", ""))
     difficulty_weights = syn_config.get("difficulty_weights")
+    hard_dimension_error_rate = float(syn_config.get("hard_dimension_error_rate", 0.55))
+    hard_dimension_weight = float(syn_config.get("hard_dimension_weight", 0.85))
     predictions_root = config.get("predictions_root", "results")
 
     all_stats = {}
@@ -198,6 +200,8 @@ def run_pipeline(config_path: str):
                     bad_cases_per_report=bad_cases_per_report,
                     output_dir=str(output_path / "_intermediate" / "diagnosis_reports"),
                     batch_size=diagnosis_batch_size,
+                    hard_dimension_error_rate=hard_dimension_error_rate,
+                    hard_dimension_weight=hard_dimension_weight,
                 )
                 report_file = out_dir / "dimension_reports.jsonl"
                 with open(report_file, encoding="utf-8") as f:

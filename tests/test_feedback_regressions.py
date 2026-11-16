@@ -739,3 +739,48 @@ def test_difficulty_gate_scores_with_eval_pipeline(monkeypatch):
     assert stats["total"] == 4 and 0 <= stats["correct"] <= 4
     assert gate.passes({"correct": 3, "total": 4, "solve_rate": 0.75})
     assert not gate.passes({"correct": 4, "total": 4, "solve_rate": 1.0})
+
+
+def test_diagnosis_prompt_preserves_cot_head_and_tail_and_sanitizes_anti_patterns():
+    from feedback.prompts import build_batch_diagnosis_prompt, _sanitize_report_items
+
+    head = "HEAD_MARKER " + ("A" * 350)
+    middle = "MIDDLE_FILLER " * 60
+    tail = "TAIL_FINAL_BELIEF_ERROR " + ("Z" * 100)
+    prompt = build_batch_diagnosis_prompt(
+        [{"_actual_prompt": "Q?", "_wrong_reasoning": head + middle + tail, "_wrong_answers": ["B"], "_gold_answers": ["A"]}],
+        "Belief: Content false beliefs",
+        "ToMBench",
+    )
+    assert "HEAD_MARKER" in prompt
+    assert "TAIL_FINAL_BELIEF_ERROR" in prompt
+    assert "[middle truncated]" in prompt
+    assert "NEVER prescribe explicit narrator belief/mental-state verbs" in prompt
+
+    items = [
+        "Use a glance and smile cue to hint at the hidden item.",
+        "Make the correct answer 'pick one at random'.",
+        "Enforce 'almost none != 0' when counting items.",
+        "Place a genuine physical timing gap before the second inspection.",
+    ]
+    assert _sanitize_report_items(items) == [items[-1]]
+
+
+def test_stage2_cyclic_sampling_prevents_quota_starvation_and_boosts_high_error_dims():
+    from collections import Counter
+    from feedback.stage2_diagnosis import sample_bad_cases_weighted
+    from feedback.prompts import resolve_variant_difficulty
+
+    cases = [{"sample_idx": 1, "_difficulty": 2}, {"sample_idx": 2, "_difficulty": 1}]
+    sampled = sample_bad_cases_weighted(cases, n_samples=10, random_seed=7)
+    assert len(sampled) == 10
+    assert {c["sample_idx"] for c in sampled} == {1, 2}
+
+    report = {
+        "dimension": "Knowledge: Knowledge-attention links",
+        "difficulty_distribution": {"easy": 0.2, "medium": 0.5, "hard": 0.3},
+        "difficulty_policy": "weighted",
+        "_meta": {"dim_error_rate": 0.65, "hard_dimension_error_rate": 0.55, "hard_dimension_weight": 0.85},
+    }
+    picked = [resolve_variant_difficulty(report, variant_index=i % 5, schedule_index=i) for i in range(20)]
+    assert Counter(picked)["hard"] >= 17

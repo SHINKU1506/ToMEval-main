@@ -454,6 +454,8 @@ A language model failed on the following {K} questions from the **{dimension}** 
 6. required_distractor_logic must state which shortcut each important distractor should trigger
 7. hard_constraints must list structural constraints for a hard variant
 8. NEVER require or reward a confirming reaction: no constraint, trigger, distractor, or pattern may rely on another agent's subsequent response, reply, action, or nod that confirms or disambiguates the answer. New questions stop at the queried moment, so the answer must be inferable from evidence available BEFORE it
+9. NEVER prescribe explicit narrator belief/mental-state verbs ("assumed", "mistook", "thought", "误以为", "不知情"), gaze/smile cues, forced "cannot tell / pick at random" meta-options, bundled dual-claim questions, or narrow constant arithmetic rules (e.g. "almost none = 1 or 2-3") in hard_constraints or required_distractor_logic
+10. Generalize across the failed cases rather than over-fitting a single item's surface quirk; specify multi-agent timing, physical access, and perspective-conflict constraints that challenge CoT reasoning while keeping one unambiguous answer
 
 cognitive_operation options (choose the most specific match):
   belief_state_update    — failed to update an agent's belief after an unwitnessed event
@@ -506,8 +508,12 @@ def build_batch_diagnosis_prompt(
 
         if len(actual_prompt) > 1500:
             actual_prompt = actual_prompt[:1300] + "\n...[truncated]"
-        if wrong_reasoning and len(wrong_reasoning) > 800:
-            wrong_reasoning = wrong_reasoning[:700] + "\n...[truncated]"
+        if wrong_reasoning and len(wrong_reasoning) > 1200:
+            wrong_reasoning = (
+                wrong_reasoning[:300]
+                + "\n...[middle truncated]...\n"
+                + wrong_reasoning[-800:]
+            )
 
         section = f"### Case {i}\n**Prompt**:\n{actual_prompt or '(not available)'}\n\n"
         if wrong_reasoning:
@@ -715,6 +721,9 @@ _SPOILER_CONSTRAINT_PATTERNS = (
     ),
     re.compile(r"\brespond\w*\s+in\s+a\s+way\s+that\b", re.IGNORECASE),
     re.compile(r"(?:随后|之后|后续)的?(?:回应|回复|反应|行动|动作|行为)|证实|确认了?(?:其|该|这一)?(?:意图|含义|答案)"),
+    re.compile(r"\b(?:gaze|glanc\w*|eye\s+contact|smil\w*|grin\w*|wink\w*)\b", re.IGNORECASE),
+    re.compile(r"\bpick\s+(?:one\s+)?at\s+random\b", re.IGNORECASE),
+    re.compile(r"\b(?:almost|nearly)\s+none\b.*?(?:!=|not\s+equal|never\s+zero|non-?zero)", re.IGNORECASE),
 )
 
 
@@ -809,21 +818,53 @@ def resolve_variant_difficulty(
     target_difficulty: str = "",
     difficulty_weights: Optional[Dict[str, float]] = None,
     schedule_index: Optional[int] = None,
+    hard_dimension_error_rate: Optional[float] = None,
+    hard_dimension_weight: Optional[float] = None,
 ) -> str:
     """Resolve the target difficulty label ('hard'|'medium'|'easy') for one variant."""
     difficulty_distribution = report.get("difficulty_distribution", {})
     policy = str(report.get("difficulty_policy") or "weighted")
     default_hard_mix = {"hard": 0.70, "medium": 0.25, "easy": 0.05}
-    weights = difficulty_weights or default_hard_mix
+    meta = report.get("_meta") or {}
+    dim_err = float(meta.get("dim_error_rate", 0.0) or 0.0)
+    err_threshold = (
+        float(hard_dimension_error_rate)
+        if hard_dimension_error_rate is not None
+        else float(meta.get("hard_dimension_error_rate", 0.55) or 0.55)
+    )
+    boost_weight = (
+        float(hard_dimension_weight)
+        if hard_dimension_weight is not None
+        else float(meta.get("hard_dimension_weight", 0.85) or 0.85)
+    )
+    weights = dict(difficulty_weights or default_hard_mix)
     sched_idx = variant_index if schedule_index is None else schedule_index
     effective_mode = target_difficulty or policy
     if effective_mode in ("hard", "hard_only"):
         return "hard"
+
+    def _apply_high_error_boost(base_weights: Dict[str, Any]) -> Dict[str, float]:
+        clean = {
+            k: max(0.0, float(base_weights.get(k, 0.0)))
+            for k in ("hard", "medium", "easy")
+        }
+        if dim_err >= err_threshold and clean["hard"] < boost_weight:
+            remainder = max(0.0, 1.0 - boost_weight)
+            non_hard = clean["medium"] + clean["easy"]
+            if non_hard > 0:
+                clean["medium"] = remainder * (clean["medium"] / non_hard)
+                clean["easy"] = remainder * (clean["easy"] / non_hard)
+            else:
+                clean["medium"] = remainder
+                clean["easy"] = 0.0
+            clean["hard"] = boost_weight
+        return clean
+
     if effective_mode == "hard_mix":
-        schedule = _build_interleaved_difficulty_schedule(weights)
+        schedule = _build_interleaved_difficulty_schedule(_apply_high_error_boost(weights))
         return schedule[sched_idx % len(schedule)]
     selected = difficulty_weights or difficulty_distribution or default_hard_mix
-    schedule = _build_interleaved_difficulty_schedule(selected)
+    schedule = _build_interleaved_difficulty_schedule(_apply_high_error_boost(selected))
     return schedule[sched_idx % len(schedule)]
 
 

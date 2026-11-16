@@ -351,38 +351,52 @@ def sample_bad_cases_weighted(
 ) -> List[Dict[str, Any]]:
     """按 _difficulty 加权采样 bad case（difficulty 越高，被选中概率越大）"""
     import random
-    random.seed(random_seed)
+    rng = random.Random(random_seed)
 
-    if n_samples >= len(bad_cases):
-        return bad_cases
+    if not bad_cases or n_samples <= 0:
+        return []
+    if n_samples == len(bad_cases):
+        return list(bad_cases)
 
-    weights = [float(case.get("_difficulty", 1)) for case in bad_cases]
-    total_weight = sum(weights)
-    if total_weight == 0:
+    weights = [max(0.0, float(case.get("_difficulty", 1))) for case in bad_cases]
+    if sum(weights) <= 0:
         weights = [1.0] * len(bad_cases)
 
-    # 不放回加权采样
-    population = list(range(len(bad_cases)))
-    norm_weights = [w / sum(weights) for w in weights]
-    chosen_indices = []
-    seen = set()
-    attempts = 0
-    while len(chosen_indices) < n_samples and attempts < n_samples * 10:
-        attempts += 1
-        idx = random.choices(population, weights=norm_weights, k=1)[0]
-        if idx not in seen:
-            seen.add(idx)
-            chosen_indices.append(idx)
+    def _weighted_permutation() -> List[Dict[str, Any]]:
+        population = list(range(len(bad_cases)))
+        total_w = sum(weights)
+        norm_weights = [w / total_w for w in weights]
+        chosen_indices: List[int] = []
+        seen = set()
+        attempts = 0
+        target = len(bad_cases)
+        while len(chosen_indices) < target and attempts < target * 10:
+            attempts += 1
+            idx = rng.choices(population, weights=norm_weights, k=1)[0]
+            if idx not in seen:
+                seen.add(idx)
+                chosen_indices.append(idx)
+        if len(chosen_indices) < target:
+            for i in range(len(bad_cases)):
+                if i not in seen:
+                    chosen_indices.append(i)
+        return [bad_cases[i] for i in chosen_indices]
 
-    # 若仍不足，顺序补充
-    if len(chosen_indices) < n_samples:
-        for i in range(len(bad_cases)):
-            if i not in seen:
-                chosen_indices.append(i)
-            if len(chosen_indices) >= n_samples:
-                break
+    if n_samples < len(bad_cases):
+        return _weighted_permutation()[:n_samples]
 
-    return [bad_cases[i] for i in chosen_indices[:n_samples]]
+    # 当目标采样数超过现有 bad case 数时，使用多轮加权排列循环补充并错开配对顺序，
+    # 避免报告配额被提前截断（high-error 维度丢失配额）或连续报告拿到相同配对。
+    result: List[Dict[str, Any]] = []
+    cycle = 0
+    while len(result) < n_samples:
+        perm = _weighted_permutation()
+        if cycle > 0 and len(perm) > 1:
+            shift = cycle % (len(perm) - 1) + 1
+            perm = perm[shift:] + perm[:shift]
+        result.extend(perm)
+        cycle += 1
+    return result[:n_samples]
 
 
 # ============ 主诊断函数 ============
@@ -395,6 +409,8 @@ def run_stage2_dimension_diagnosis(
     bad_cases_per_report: int = 1,
     output_dir: str = "data_output/diagnosis_reports",
     batch_size: int = 10,
+    hard_dimension_error_rate: float = 0.55,
+    hard_dimension_weight: float = 0.85,
 ) -> Path:
     """读取 bad_cases.jsonl，按维度错误率分配报告，每个报告输入 bad_cases_per_report 条 bad case
 
@@ -472,11 +488,13 @@ def run_stage2_dimension_diagnosis(
 
     # 尝试读取 Stage 1 生成的 dim_stats.json，用维度内部错误率作为权重
     dim_totals = None
+    dim_error_rates: Dict[str, float] = {}
     dim_stats_path = stage1_dir / "dim_stats.json"
     if dim_stats_path.exists():
         with open(dim_stats_path, encoding="utf-8") as f:
             dim_stats = json.load(f)
         dim_totals = {dim: v["total"] for dim, v in dim_stats.items()}
+        dim_error_rates = {dim: float(v.get("error_rate", 0.0) or 0.0) for dim, v in dim_stats.items()}
         logger.info(f"    📈 使用维度错误率分配报告配额")
 
     # 按维度错误率（或 fallback 到 bad case 数量比例）分配报告配额
@@ -543,6 +561,9 @@ def run_stage2_dimension_diagnosis(
                 # 维度键的 __zh 后缀来自 get_dimension_key 的语言拆分，
                 # 记录到报告 _meta，供 Stage 3 决定合成语言。
                 "lang": "zh" if dim.endswith("__zh") else "en",
+                "dim_error_rate": round(dim_error_rates.get(dim, 0.0), 4),
+                "hard_dimension_error_rate": hard_dimension_error_rate,
+                "hard_dimension_weight": hard_dimension_weight,
             })
             all_batches.append(batch)
 
@@ -569,6 +590,11 @@ def run_stage2_dimension_diagnosis(
                 result = resp.content if resp else None
                 if result is not None:
                     record = result.model_dump()
+                    if (
+                        meta_info.get("dim_error_rate", 0.0) >= hard_dimension_error_rate
+                        and record.get("difficulty_policy") == "weighted"
+                    ):
+                        record["difficulty_policy"] = "hard_mix"
                     record["_meta"] = meta_info
                     f.write(json.dumps(record, ensure_ascii=False) + "\n")
                     success_count += 1
