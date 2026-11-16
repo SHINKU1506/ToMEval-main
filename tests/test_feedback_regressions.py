@@ -1237,10 +1237,100 @@ def test_difficulty_gate_extracts_deshuffled_tail_cot_and_representative_trace(m
         {"options": {"A": "On the chair"}, "pred": {"reasoning": ("X" * 100) + "FINAL_DECISION_TAIL", "content": r"\boxed{A}"}},
         {"is_correct": True, "extracted": "A"},
         max_tail_chars=40,
+        trace_mode="tail_truncate",
     )
     assert "earlier reasoning omitted" in truncated["reasoning_tail"]
     assert "FINAL_DECISION_TAIL" in truncated["reasoning_tail"]
     assert "XXXXX" in truncated["reasoning_tail"] and len(truncated["reasoning_tail"]) < 100
+
+
+def test_difficulty_gate_supports_anchor_tail_truncate_and_prompt_summary_modes(monkeypatch):
+    import feedback.difficulty_gate as dg
+    from src.llm.client import LLMResponse
+
+    # 1. anchor mode: slices cleanly at sentence boundary where option comparison starts, and keeps full content up to 1500 chars
+    story_reasoning = (
+        "First I trace the initial setup in detail and track all three rooms carefully. "
+        "Second paragraph summarizes who entered when. "
+        "Looking at the options: Option A fails because the key moved; Option B matches Maya's belief."
+    )
+    long_content = ("Full explanation sentence. " * 25) + r"\boxed{B}"
+    anchor_entry = dg._format_trace_entry(
+        {"options": {"A": "Locker", "B": "Chair"}, "pred": {"reasoning": story_reasoning, "content": long_content}},
+        {"is_correct": True, "extracted": "B"},
+        max_tail_chars=90,
+        trace_mode="anchor",
+    )
+    assert anchor_entry["trace_mode"] == "anchor"
+    assert anchor_entry["reasoning_tail"].startswith("...[earlier reasoning omitted]...\nLooking at the options:")
+    assert len(anchor_entry["content"]) > 400  # preserves full content beyond tail_truncate's 400-char cap
+
+    # 2. tail_truncate mode: preserves exact fixed tail behavior and 400-char content cap
+    trunc_entry = dg._format_trace_entry(
+        {"options": {"A": "Locker", "B": "Chair"}, "pred": {"reasoning": story_reasoning, "content": long_content}},
+        {"is_correct": True, "extracted": "B"},
+        max_tail_chars=60,
+        trace_mode="tail_truncate",
+    )
+    assert trunc_entry["trace_mode"] == "tail_truncate"
+    assert len(trunc_entry["content"]) == 403
+    assert trunc_entry["reasoning_tail"] == "...[earlier reasoning omitted]...\n" + story_reasoning[-60:]
+
+    # 3. prompt_summary mode: appends summary instruction to evaluation prompt and extracts [Summary] into prompt
+    prompts_seen = []
+
+    class FakeClient:
+        def batch_generate(self, prompts, desc="", system_prompts=None):
+            prompts_seen.extend(prompts)
+            return [
+                LLMResponse(
+                    content="[Summary]: Option A contradicts timing; Option B matches Maya's belief.\n\\boxed{B}",
+                    reasoning=story_reasoning,
+                )
+            ]
+
+    monkeypatch.setattr(dg.runner, "create_content_client", lambda cfg: FakeClient())
+    monkeypatch.setattr(
+        "src.evaluation.prediction.build_option_bundle",
+        lambda *a, **kw: ({"A": "Locker", "B": "Chair", "C": "Desk", "D": "Door"}, ["B"], ["A", "C", "D"], 0),
+    )
+    gate = dg.build_difficulty_gate({
+        "enabled": True,
+        "k": 1,
+        "min_solve_rate": 0.0,
+        "max_solve_rate": 0.5,
+        "trace_mode": "prompt_summary",
+        "llm": {"model_name": "checkpoint-124", "api_key": "k", "api_url": "u"},
+    })
+    assert gate is not None
+    stats = gate.evaluate(
+        [{
+            "story": "Maya left.",
+            "question": "Where?",
+            "answer": {"correct_answers": ["Chair"], "wrong_answers": ["Locker", "Desk", "Door"]},
+            "meta": {"id": "m1", "lang": "en"},
+        }],
+        "ToMBench",
+    )["m1"]
+    assert "[Summary]:" in prompts_seen[0]
+    assert stats["solver_trace"]["trace_mode"] == "prompt_summary"
+    assert stats["solver_trace"]["summary"] == "Option A contradicts timing; Option B matches Maya's belief."
+    prompt = build_stage2_generation_from_report_prompt(
+        {"dimension": "d", "primary_cognitive_operation": "belief_state_update", "_meta": {"lang": "en"}},
+        "ToMBench",
+        target_difficulty="hard",
+        previous_question={
+            "story": "Maya left.", "question": "Where?",
+            "answer": {"correct_answers": ["Chair"], "wrong_answers": ["Locker", "Desk", "Door"]},
+            "gate_reason": "too_easy",
+            "solver_result": "1/1 correct by checkpoint-124",
+            "solver_trace": stats["solver_trace"],
+            "selected_option_counts": stats["selected_option_counts"],
+        },
+    )
+    assert "Trace Mode" in prompt and "prompt_summary" in prompt
+    assert "Solver Explicit Summary" in prompt
+    assert "Option A contradicts timing; Option B matches Maya's belief." in prompt
 
 
 def test_retry_prompt_injects_deshuffled_solver_cot_and_anti_drift_rules():

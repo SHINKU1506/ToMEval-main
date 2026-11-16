@@ -65,6 +65,8 @@ synthesis:
     min_solve_rate: 0.125  # reject 0/4 likely-broken/unanswerable questions
     max_solve_rate: 0.75   # reject when solver solves > 3/4
     fail_open: false
+    trace_mode: anchor     # options: tail_truncate | anchor | prompt_summary
+    max_tail_chars: 700
     protocol: cot
     difficulties: [hard]
 

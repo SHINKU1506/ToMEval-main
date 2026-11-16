@@ -919,6 +919,9 @@ def _format_solver_trace_section(previous_question: Dict[str, Any], primary_op: 
             f"- **Selected Option Distribution Across Rollouts**: {json.dumps(opt_counts, ensure_ascii=False)}"
         )
     if isinstance(trace, dict):
+        trace_mode = trace.get("trace_mode")
+        if trace_mode:
+            lines.append(f"- **Trace Mode**: `{trace_mode}`")
         option_map = trace.get("option_map") or {}
         if option_map:
             mapping_str = " | ".join(f"{k}: {v}" for k, v in sorted(option_map.items()))
@@ -929,6 +932,9 @@ def _format_solver_trace_section(previous_question: Dict[str, Any], primary_op: 
         selected_letters = trace.get("selected_letters") or []
         if selected_text or selected_letters:
             lines.append(f"- **Chosen Option**: {selected_letters} -> {selected_text}")
+        summary = str(trace.get("summary") or "").strip()
+        if summary:
+            lines.append(f"- **Solver Explicit Summary**: {summary}")
         reasoning_tail = str(trace.get("reasoning_tail") or "").strip()
         if reasoning_tail:
             lines.append(f"- **Solver CoT Tail**:\n```text\n{reasoning_tail}\n```")
