@@ -292,8 +292,13 @@ def _validate_synthesized_question(
 class ToMBenchQuestionFlat(BaseModel):
     reasoning_trap_plan: str = Field(
         default="",
-        description="Pre-drafting plan (stripped before storage): state (1) target agent's partial observations vs hidden updates, "
-                    "(2) plausible misleading cue, (3) what flawed reasoning path each distractor exploits. Do NOT copy into story/question.",
+        description=(
+            "Pre-drafting plan (stripped before storage): state (1) target agent's partial observations vs hidden updates, "
+            "(2) why the partial cue points toward a distractor rather than the correct answer (counter-directional), "
+            "(3) why each distractor stays physically live without a distractor-killing patch, and on retry "
+            "(4) what exact leak made the rejected draft too easy and what new topological hop was added. "
+            "Do NOT copy into story/question."
+        ),
     )
     target_moment: str = Field(
         description="Exact final sentence or utterance targeted by the question. The story must end with this text; do not include any subsequent action.",
@@ -966,7 +971,11 @@ def synthesize_from_reports(
         ]
 
         success_this_round = 0
-        client = runner.create_llm_client(synthesis_llm_config)
+        round_llm_config = dict(synthesis_llm_config)
+        retry_think = round_llm_config.pop("retry_enable_thinking", True)
+        if round_idx > 0 and retry_think:
+            round_llm_config["enable_thinking"] = True
+        client = runner.create_llm_client(round_llm_config)
         for batch_start in range(0, len(gen_prompts), batch_size):
             batch_prompts = gen_prompts[batch_start: batch_start + batch_size]
             batch_pairs = pending_pairs[batch_start: batch_start + batch_size]

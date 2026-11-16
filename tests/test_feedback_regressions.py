@@ -1112,3 +1112,59 @@ def test_stage3_rejects_shared_leading_claim_and_numeric_fraction_gloss():
         "wrong_answers": ["约二十二份", "约二十份", "约十二份"],
     }
     assert _validate_synthesized_question(bare_ok, "ToMBench", difficulty="hard") is None
+
+
+def test_synthesis_enables_thinking_on_retry_rounds(monkeypatch):
+    from types import SimpleNamespace
+    import feedback.stage3_synthesis as stage3
+    from feedback.prompts import SYNTHESIS_FORMAT_REGISTRY
+
+    seen_thinking = []
+    story = "Maya left her notebook on the desk before going out."
+
+    class FakeClient:
+        def batch_generate_structure(self, prompts, schema, mode="auto", desc=""):
+            q = ToMBenchQuestionFlat(
+                reasoning_trap_plan="plan",
+                target_moment=story,
+                story=story,
+                question="What does Maya think? A. On desk B. In bag C. On chair D. In bin",
+                correct_letter="A",
+                meta_ability="false_belief",
+                meta_id="s1",
+            )
+            return [SimpleNamespace(content=SimpleNamespace(questions=[q])) for _ in prompts]
+
+    def fake_create(cfg):
+        seen_thinking.append(cfg.get("enable_thinking"))
+        return FakeClient()
+
+    class GateOnce:
+        model_name = "checkpoint-124"
+        k = 4
+
+        def __init__(self):
+            self.calls = 0
+
+        def evaluate(self, rows, dataset_name):
+            self.calls += 1
+            c = 4 if self.calls == 1 else 2
+            return {r["meta"]["id"]: {"correct": c, "total": 4, "solve_rate": c / 4} for r in rows}
+
+        def passes(self, stats):
+            return stats["solve_rate"] <= 0.75
+
+    monkeypatch.setattr(stage3.runner, "create_llm_client", fake_create)
+    rows, _ = stage3.synthesize_from_reports(
+        [{"dimension": "d", "primary_cognitive_operation": "belief_state_update", "_meta": {"lang": "en"}}],
+        "ToMBench",
+        {"model_name": "claude-opus-5-5", "enable_thinking": False, "retry_enable_thinking": True},
+        samples_per_report=1,
+        max_retries=2,
+        target_difficulty="hard",
+        difficulty_gate=GateOnce(),
+    )
+    assert len(rows) == 1
+    assert seen_thinking == [False, True]
+    assert "counter-directional" in ToMBenchQuestionFlat.model_fields["reasoning_trap_plan"].description
+    assert "new topological hop" in SYNTHESIS_FORMAT_REGISTRY["ToMBench"]["json_skeleton"]["questions"][0]["reasoning_trap_plan"]

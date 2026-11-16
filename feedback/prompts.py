@@ -40,7 +40,7 @@ SYNTHESIS_FORMAT_REGISTRY: Dict[str, Dict[str, Any]] = {
         ),
         "json_skeleton": {
             "questions": [{
-                "reasoning_trap_plan": "<brief plan before drafting: (1) partial observation vs hidden updates, (2) misleading cue, (3) shortcut behind each wrong option; stripped before storage>",
+                "reasoning_trap_plan": "<brief plan before drafting: (1) partial observation vs hidden updates, (2) why the partial cue points toward a distractor, (3) why each distractor stays physically live without convenience patches, and on retry (4) exact leak in rejected draft + new topological hop added; stripped before storage>",
                 "target_moment": "<exact final sentence or utterance that the question targets; story must end with this text>",
                 "story": "<complete story text>",
                 "question": "<question with A. B. C. D. options embedded>",
