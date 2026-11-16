@@ -784,3 +784,26 @@ def test_stage2_cyclic_sampling_prevents_quota_starvation_and_boosts_high_error_
     }
     picked = [resolve_variant_difficulty(report, variant_index=i % 5, schedule_index=i) for i in range(20)]
     assert Counter(picked)["hard"] >= 17
+
+
+def test_stage3_prompt_encodes_review72_rules_and_rotates_by_schedule_index():
+    from feedback.prompts import (
+        _EVIDENCE_CHANNELS,
+        _NAME_POOL_HINTS,
+        build_stage2_generation_from_report_prompt,
+    )
+
+    report = {"dimension": "Knowledge: Information-knowledge links", "primary_cognitive_operation": "information_access", "_meta": {"lang": "zh"}}
+    p_a = build_stage2_generation_from_report_prompt(
+        report, "ToMBench", variant_index=0, schedule_index=0, target_difficulty="hard", lang="zh",
+    )
+    p_b = build_stage2_generation_from_report_prompt(
+        report, "ToMBench", variant_index=0, schedule_index=3, target_difficulty="hard", lang="zh",
+    )
+    assert _EVIDENCE_CHANNELS[0] in p_a
+    assert _EVIDENCE_CHANNELS[3] in p_b and _EVIDENCE_CHANNELS[0] not in p_b
+    assert _NAME_POOL_HINTS["zh"][0] in p_a
+    assert _NAME_POOL_HINTS["zh"][3] in p_b
+    assert "NEVER narrate the queried mental state" in p_a
+    assert "0.80x-1.20x" in p_a
+    assert "bundle two independent claims" in p_a

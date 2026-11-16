@@ -29,12 +29,13 @@ SYNTHESIS_FORMAT_REGISTRY: Dict[str, Dict[str, Any]] = {
         "complexity_hint": (
             "Story: medium uses 3-6 sentences; hard uses 5-8 sentences (100-500 words), "
             "at least 3 named agents, and an everyday social scenario. Hard stories must include "
-            "at least two information updates, natural scene-driven access gaps (e.g. a departed agent, "
-            "a partial message, or visual occlusion — NEVER meta-signposts like 'working completely alone' "
-            "or 'without telling anyone'), one true misleading cue, and distractors aligned with "
-            "competing CoT reasoning failures. "
+            "at least two sequential information updates, one neutral intervening action/beat before target_moment, "
+            "natural scene-driven access gaps (e.g. a departed agent, a partial message, or visual occlusion — "
+            "NEVER meta-signposts like 'working completely alone' or 'without telling anyone', and NEVER narrator "
+            "epistemic spoilers like 'assumed', 'mistook', 'unbeknownst to', '误以为', or '不知情'), "
+            "one true misleading cue, and balanced single-claim distractors aligned with competing CoT reasoning failures. "
             "Covers: false beliefs, intentions, non-literal communication (faux pas/irony/white lies), second-order beliefs. "
-            "Style: natural English prose, use Western-style names. "
+            "Style: natural English prose with varied Western-style names (or natural Chinese prose/names when lang=zh). "
             "Question: asks about one agent's mental state, belief, or intention at one exact moment."
         ),
         "json_skeleton": {
@@ -604,10 +605,11 @@ _DIFFICULTY_RULES: Dict[str, str] = {
         "- Story: 5-8 sentences, at least 3 agents, with overlapping and competing partial knowledge states\n"
         "- Partial Knowledge + Misleading Attribution: instead of giving the target agent zero access, give them a genuine partial observation or ambiguous secondhand cue that makes a flawed attribution initially plausible unless CoT reconciles event order and source limits\n"
         "- Competing Cross-Dimension Conflict: anchor the dilemma in at least one high-tension conflict — (a) preference/constraint collision, (b) indirect upstream causal link behind a misleading surface symptom, or (c) suppressed emotion / social-norm duty tested via concrete action rather than a bare label\n"
-        "- Include at least two sequential updates where physical timing, departures, or truncated interactions leave different agents with asymmetric views\n"
+        "- Include at least two sequential updates where physical timing, departures, or truncated interactions leave different agents with asymmetric views, PLUS at least one brief neutral operational action or exchange before target_moment so the decisive cue is not isolated in the penultimate clause\n"
         "- NEVER write explicit boolean signposts such as 'working completely alone', 'without telling anyone', 'having spoken to neither', 'without mentioning', 'privately discovered', 'out of earshot', '独自一人', '没有告诉任何人', '未向任何人提起', or '毫不知情' — convey access boundaries implicitly through concrete actions and timing\n"
+        "- NEVER narrate the queried mental state or misattribution directly with narrator spoiler verbs ('assumed', 'thought', 'believed', 'mistook', 'misread', 'unbeknownst to', 'did not know/realize', 'in reality', '误以为', '以为', '并没有看到', '并不知情', '却不知', '实际上', '事实上') — let the solver infer beliefs solely from physical presence, timing, object state, or dialogue\n"
         "- The question must target one primary cognitive operation at one exact moment, and stop the narrative right there without post-query spoilers\n"
-        "- Wrong options: balance length/detail across all options; include the omniscient truth, an intermediate/partial-cue trap, and another agent's competing belief\n"
+        "- Wrong options: match length/detail (0.80x-1.20x) and syntactic structure across all options; test ONE clear claim per option (never bundle two independent claims), and include the omniscient truth, an intermediate/partial-cue trap, and another agent's competing belief\n"
         "{anti_template_rules}\n"
         "{grounded_distractor_rules}"
     ),
@@ -674,16 +676,16 @@ If the question accidentally tests a different cognitive operation, revise it.
 0. [COGNITIVE OPERATION LOCK] See above — cognitive operation must be exactly {primary_cognitive_operation}
 1. **{language_directive}**
 2. Create a completely ORIGINAL question — all character names, locations, objects, and scenarios must be fresh
-3. Do NOT reuse names like Alice/Bob/Maria/John or scenarios from known benchmarks
+3. Do NOT reuse benchmark names (Alice/Bob/Maria/John) or overused synthetic defaults (Owen/Fiona/Theo/Priya/Declan/Felix/Hannah/Claire/Trevor/Nolan/林晓/林晓雯/周敏)
 4. Strictly follow the JSON structure and story style shown above
 5. Choose a story theme from the Recommended Story Themes if possible
 6. {format_specific_rules}
 7. Set meta_difficulty to "{difficulty}" (from the Complexity Specification above)
-8. [NO SPOILER / STOP AT TARGET MOMENT] The story MUST end at or right before the target moment queried by the question. NEVER narrate any subsequent action, reply, execution, or clarification that spoils or executes the answer
-9. [OPTION SYMMETRY & DETERMINACY] Keep all choices balanced in specificity, syntactic completeness, and approximate length (do NOT make the correct option noticeably longer or more detailed than the distractors). Ensure the story cleanly determines one unique answer without ambiguous guessing
+8. [NO SPOILER / STOP AT TARGET MOMENT] The story MUST end at or right before the target moment queried by the question. NEVER narrate any subsequent action, reply, execution, or clarification that spoils or executes the answer, and NEVER use narrator belief spoilers ('assumed', 'mistook', 'unbeknownst to', '误以为', '不知情') to hand over the queried mental state
+9. [OPTION SYMMETRY & DETERMINACY] Keep all choices balanced in specificity, syntactic completeness, and approximate length (0.80x-1.20x across options; do NOT make the correct option noticeably longer or more detailed than distractors). Test a single clean claim per option without bundled dual-claim clauses, and avoid subjective moral/politeness tie-breakers or uncalibrated 'cannot tell / pick at random' meta-options
 10. [PLAN FIRST] When the JSON schema includes `reasoning_trap_plan`, fill it first with the belief-conflict matrix and per-distractor CoT traps before drafting `target_moment`/`story`/`question` (planning text is stripped before storage; never echo it inside `story` or `question`)
 11. [TARGET MOMENT CONTRACT] When the JSON schema includes `target_moment`, copy the exact final sentence or utterance that the question targets into that field. The story MUST end with that exact text. Do not write any action, reply, confirmation, or consequence after it.
-12. After drafting, verify: (a) cognitive operation is {primary_cognitive_operation}, (b) `target_moment` is the exact story suffix, (c) story stops before any spoiler, (d) all options match in length/detail and pass the DISTRACTOR DESIGN self-check
+12. After drafting, verify: (a) cognitive operation is {primary_cognitive_operation}, (b) `target_moment` is the exact story suffix, (c) story stops before any spoiler or narrator mental-state shortcut, (d) all options match in length/detail (0.80x-1.20x) and pass the DISTRACTOR DESIGN self-check
 
 {retry_feedback}## Output
 Generate {target_count} question(s) following the exact format above.
@@ -750,17 +752,43 @@ _EVIDENCE_CHANNELS: List[str] = [
     "an action taken by mistake or interrupted midway, whose purpose must be reconstructed from the setup",
 ]
 
+_NAME_POOL_HINTS: Dict[str, List[str]] = {
+    "en": [
+        "Beatrice, Mateo, Caleb, Ingrid",
+        "Nadia, Jonah, Miriam, Victor",
+        "Gideon, Simone, Arthur, Lydia",
+        "Keiko, Darren, Renata, Malcolm",
+        "Tessa, Warren, Sylvia, Damon",
+        "Camille, Hector, Valerie, Samir",
+        "Phoebe, Quentin, Denise, Omar",
+        "Lucia, Roland, Esther, Tariq",
+    ],
+    "zh": [
+        "沈舟、陆安、顾清、唐宁",
+        "陈屿、许诺、白璐、苏澈",
+        "宋知微、周砚、江篱、程野",
+        "谢忱、温晴、梁宵、罗溪",
+        "傅言、季安、方舒、魏岚",
+        "叶蓁、韩朔、齐悦、蒋澄",
+        "杜衡、严溪、林序、岑川",
+        "徐行、姜梨、纪宁、段朗",
+    ],
+}
+
 _ANTI_TEMPLATE_RULES = (
     "- Decisive evidence channel for THIS variant: {channel}. Build the story around this channel.\n"
+    "- Suggested fresh character names for THIS variant: {name_hint} (vary roles/occupations; avoid Owen/Fiona/Theo/Priya/Declan/Felix/Hannah/Claire/Trevor/Nolan/林晓/林晓雯/周敏)\n"
     "- Do NOT use the 'catches eye / glances toward X / smiles / asks a literal question' template, and do not make a gaze or smile the key cue\n"
     "- Do NOT add a whimsical decoy object (goofy, comical, or funny decoration, sticker, painting, umbrella) to support an 'amusement' distractor\n"
-    "- Do NOT make the correct answer the only option that ties together every planted detail; at least one distractor must also be consistent with most of the story and fail on exactly one fact"
+    "- Do NOT make the correct answer the only option that ties together every planted detail; at least one distractor must also be consistent with most of the story and fail on exactly one fact\n"
+    "- Physical & quantitative determinacy: if the story includes a physical obstacle (e.g. heavy load, broken tool, towed vehicle), the correct option must resolve it rather than leaving it broken; if using approximate quantifiers ('nearly half', 'almost none', '将近一半', '几乎没有'), never separate numeric options by ±1 or ±2 inside the vague interval unless a post-update recount uniquely closes the exact number"
 )
 
 _GROUNDED_DISTRACTOR_RULES = (
     "- Every option may mention ONLY people, objects, and events that appear in the story; never invent a new character, motive, defect, or event inside an option\n"
-    "- Every option must be wrong because of a specific story fact, not because it introduces unsupported information\n"
-    "- Match the certainty and hedging style across options: if one option expresses uncertainty, the others must use comparable epistemic framing"
+    "- Every option must be wrong because of a specific story fact, not because it introduces unsupported information (never let a distractor remain factually true under the narrative)\n"
+    "- Match the certainty and hedging style across options: if one option expresses uncertainty, the others must use comparable epistemic framing\n"
+    "- Do NOT use 'cannot tell / pick one at random / 无法确定' as a meta-option unless testing strict physical occlusion/indistinguishability, and even then all 4 options must share the exact same sentence frame and length (0.80x-1.20x); NEVER bundle two independent claims into one option"
 )
 
 
@@ -937,9 +965,15 @@ def build_stage2_generation_from_report_prompt(
 
     difficulty_specific_rules = _DIFFICULTY_RULES.get(difficulty, _DIFFICULTY_RULES["medium"])
     if difficulty == "hard":
-        channel = _EVIDENCE_CHANNELS[variant_index % len(_EVIDENCE_CHANNELS)]
+        channel_idx = schedule_index if schedule_index is not None else variant_index
+        channel = _EVIDENCE_CHANNELS[channel_idx % len(_EVIDENCE_CHANNELS)]
+        name_pool = _NAME_POOL_HINTS.get(lang, _NAME_POOL_HINTS["en"])
+        name_hint = name_pool[channel_idx % len(name_pool)]
         difficulty_specific_rules = difficulty_specific_rules.format(
-            anti_template_rules=_ANTI_TEMPLATE_RULES.format(channel=channel),
+            anti_template_rules=_ANTI_TEMPLATE_RULES.format(
+                channel=channel,
+                name_hint=name_hint,
+            ),
             grounded_distractor_rules=_GROUNDED_DISTRACTOR_RULES,
         )
     else:
