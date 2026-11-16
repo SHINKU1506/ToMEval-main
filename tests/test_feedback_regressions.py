@@ -1241,3 +1241,38 @@ def test_difficulty_gate_extracts_deshuffled_tail_cot_and_representative_trace(m
     assert "earlier reasoning omitted" in truncated["reasoning_tail"]
     assert "FINAL_DECISION_TAIL" in truncated["reasoning_tail"]
     assert "XXXXX" in truncated["reasoning_tail"] and len(truncated["reasoning_tail"]) < 100
+
+
+def test_retry_prompt_injects_deshuffled_solver_cot_and_anti_drift_rules():
+    for reason in ("too_easy", "too_hard_or_unanswerable"):
+        prompt = build_stage2_generation_from_report_prompt(
+            {
+                "dimension": "Emotion: Hidden emotions",
+                "primary_cognitive_operation": "emotion_attribution",
+                "_meta": {"lang": "en"},
+            },
+            "ToMBench",
+            target_difficulty="hard",
+            previous_question={
+                "story": "Old story.",
+                "question": "Old question?",
+                "answer": {"correct_answers": ["Sad"], "wrong_answers": ["Worried", "Relieved", "Angry"]},
+                "gate_reason": reason,
+                "solver_result": "4/4 correct by checkpoint-124" if reason == "too_easy" else "0/4 correct by checkpoint-124",
+                "selected_option_counts": {"Worried": 4} if reason == "too_hard_or_unanswerable" else {"Sad": 4},
+                "solver_trace": {
+                    "is_correct": reason == "too_easy",
+                    "selected_letters": ["C"],
+                    "selected_option_text": "Sad" if reason == "too_easy" else "Worried",
+                    "option_map": {"A": "Angry", "B": "Relieved", "C": "Sad", "D": "Worried"},
+                    "reasoning_tail": "...[earlier reasoning omitted]...\nMedic left so check cancelled -> pick C.",
+                    "content": r"\boxed{C}",
+                },
+            },
+        )
+        assert "Target Solver's Reasoning Trace on the Rejected Draft" in prompt
+        assert "Shuffled Option Mapping for This Rollout" in prompt
+        assert "A: Angry | B: Relieved | C: Sad | D: Worried" in prompt
+        assert "Medic left so check cancelled -> pick C." in prompt
+        assert "Do NOT play whack-a-mole" in prompt
+        assert prompt.count("Medic left so check cancelled -> pick C.") == 1

@@ -904,6 +904,48 @@ def resolve_variant_difficulty(
     return schedule[sched_idx % len(schedule)]
 
 
+def _format_solver_trace_section(previous_question: Dict[str, Any], primary_op: str) -> str:
+    """Format de-shuffled solver rollout CoT tail and anti-drift instructions for retry prompts."""
+    if not isinstance(previous_question, dict):
+        return ""
+    trace = previous_question.get("solver_trace")
+    opt_counts = previous_question.get("selected_option_counts")
+    if not trace and not opt_counts:
+        return ""
+
+    lines = ["### Target Solver's Reasoning Trace on the Rejected Draft"]
+    if opt_counts:
+        lines.append(
+            f"- **Selected Option Distribution Across Rollouts**: {json.dumps(opt_counts, ensure_ascii=False)}"
+        )
+    if isinstance(trace, dict):
+        option_map = trace.get("option_map") or {}
+        if option_map:
+            mapping_str = " | ".join(f"{k}: {v}" for k, v in sorted(option_map.items()))
+            lines.append(
+                f"- **Shuffled Option Mapping for This Rollout** (letters in the trace below refer to THIS mapping): {mapping_str}"
+            )
+        selected_text = trace.get("selected_option_text") or ""
+        selected_letters = trace.get("selected_letters") or []
+        if selected_text or selected_letters:
+            lines.append(f"- **Chosen Option**: {selected_letters} -> {selected_text}")
+        reasoning_tail = str(trace.get("reasoning_tail") or "").strip()
+        if reasoning_tail:
+            lines.append(f"- **Solver CoT Tail**:\n```text\n{reasoning_tail}\n```")
+        content = str(trace.get("content") or "").strip()
+        if content:
+            lines.append(f"- **Solver Final Output**: `{content}`")
+
+    lines.extend([
+        "- **How to Use This Trace (Anti-Drift Rules)**:",
+        "  1. Pinpoint the exact shortcut or distractor-eliminating sentence in the solver trace above.",
+        "  2. Do NOT play whack-a-mole by deleting necessary premises or making wording vague/ambiguous; remove any distractor-killing convenience patch the solver used and flip supporting cues counter-directional.",
+        f"  3. Verify the upgraded question still uniquely tests `{primary_op}` with one objectively determinable answer.",
+        "",
+    ])
+    return "\n".join(lines) + "\n"
+
+
 def build_stage2_generation_from_report_prompt(
     report: Dict[str, Any],
     dataset_name: str,
@@ -994,7 +1036,17 @@ def build_stage2_generation_from_report_prompt(
 
     if previous_question is not None:
         failure_reason = previous_question.get("_failure_reason") if isinstance(previous_question, dict) else None
-        prev_str = json.dumps(previous_question, indent=2, ensure_ascii=False)
+        prev_for_dump = (
+            {
+                k: v
+                for k, v in previous_question.items()
+                if k not in ("solver_trace", "selected_option_counts")
+            }
+            if isinstance(previous_question, dict)
+            else previous_question
+        )
+        prev_str = json.dumps(prev_for_dump, indent=2, ensure_ascii=False)
+        trace_section = _format_solver_trace_section(previous_question, primary_op)
         if failure_reason:
             retry_feedback = (
                 "## RETRY — Previous Attempt Failed Structured Validation\n"
@@ -1019,6 +1071,7 @@ def build_stage2_generation_from_report_prompt(
                 "overlapping numeric estimate, or factually true distractor.\n\n"
                 "### Previous Question (rejected)\n"
                 f"```json\n{prev_str}\n```\n\n"
+                f"{trace_section}"
                 "### How to fix answerability while keeping genuine ToM difficulty\n"
                 "- Ensure every premise needed for the correct option is explicitly observable or inferable before target_moment\n"
                 "- Ensure NO distractor remains factually true or practically superior under the story constraints\n"
@@ -1035,6 +1088,7 @@ def build_stage2_generation_from_report_prompt(
                 "You MUST upgrade the reasoning topology so a 32k CoT solver cannot trivially track it.\n\n"
                 "### Previous Question (rejected)\n"
                 f"```json\n{prev_str}\n```\n\n"
+                f"{trace_section}"
                 "### Mandatory Structural Escalation Rules (NOT mere surface re-skinning)\n"
                 "- **No Structural Isomorphism**: Keep or change the setting as needed, but ADD a new reasoning hop — e.g., escalate a 1st-order unobserved swap into a 2nd-order belief-about-belief question ('What does A think B expects/intends...'), OR replace a single update with two sequential updates where an intermediate partial rollback/re-labeling creates a competing stale belief.\n"
                 "- **Counter-Directional Partial Cue**: Make the target agent's partial observation (overheard fragment, text, label, or visible trace) point toward a WRONG option so naive CoT trusts it, while ONLY reconciling earlier timing/access boundaries proves the correct option. NEVER let the partial cue reinforce the correct answer.\n"
