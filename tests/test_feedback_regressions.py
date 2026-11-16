@@ -1181,3 +1181,63 @@ def test_synthesis_enables_thinking_on_retry_rounds(monkeypatch):
     assert seen_thinking == [False, False]
     assert "counter-directional" in ToMBenchQuestionFlat.model_fields["reasoning_trap_plan"].description
     assert "new topological hop" in SYNTHESIS_FORMAT_REGISTRY["ToMBench"]["json_skeleton"]["questions"][0]["reasoning_trap_plan"]
+
+
+def test_difficulty_gate_extracts_deshuffled_tail_cot_and_representative_trace(monkeypatch):
+    import feedback.difficulty_gate as dg
+    from src.llm.client import LLMResponse
+
+    row = {
+        "story": "Maya set her bag on the chair before leaving.",
+        "question": "Where does Maya think her bag is?",
+        "answer": {"correct_answers": ["On the chair"], "wrong_answers": ["In the locker", "Under the desk", "By the door"]},
+        "meta": {"id": "bag_1", "lang": "en"},
+    }
+    long_prefix = "HEAD_NOISE_" * 120
+    tail_a = "TAIL_SHORTCUT_A: Since locker was locked, Maya assumes On the chair."
+    tail_b = "TAIL_LONG_B: Detailed check -> On the chair."
+    responses = [
+        LLMResponse(content=r"\boxed{B}", reasoning=long_prefix + tail_a),
+        LLMResponse(content=r"\boxed{C}", reasoning=tail_b),
+    ]
+    option_bundles = [
+        ({"A": "In the locker", "B": "On the chair", "C": "Under the desk", "D": "By the door"}, ["B"], ["A", "C", "D"], 0),
+        ({"A": "Under the desk", "B": "In the locker", "C": "On the chair", "D": "By the door"}, ["C"], ["A", "B", "D"], 1),
+    ]
+
+    class FakeContentClient:
+        def batch_generate(self, prompts, desc="", system_prompts=None):
+            return [responses.pop(0)]
+
+    monkeypatch.setattr(dg.runner, "create_content_client", lambda cfg: FakeContentClient())
+    monkeypatch.setattr("src.evaluation.prediction.build_option_bundle", lambda *a, **kw: option_bundles.pop(0))
+
+    gate = dg.DifficultyGate(
+        {"model_name": "checkpoint-124", "api_key": "k", "api_url": "u"},
+        k=2, min_solve_rate=0.5, max_solve_rate=0.5,
+    )
+    stats = gate.evaluate([row], "ToMBench")["bag_1"]
+    assert stats["correct"] == 2 and stats["total"] == 2
+    assert stats["selected_option_counts"] == {"On the chair": 2}
+    trace = stats["solver_trace"]
+    assert trace is not None
+    assert trace["selected_option_text"] == "On the chair"
+    assert trace["selected_letters"] == ["C"]
+    assert trace["option_map"]["C"] == "On the chair"
+    assert "TAIL_LONG_B" in trace["reasoning_tail"]
+
+    # Also verify tail truncation on long single trace
+    long_only = dg._format_trace_entry(
+        {"options": {"A": "On the chair"}},
+        {"is_correct": True, "extracted": "A"},
+        max_tail_chars=50,
+    )
+    assert long_only["selected_option_text"] == "On the chair"
+    truncated = dg._format_trace_entry(
+        {"options": {"A": "On the chair"}, "pred": {"reasoning": ("X" * 100) + "FINAL_DECISION_TAIL", "content": r"\boxed{A}"}},
+        {"is_correct": True, "extracted": "A"},
+        max_tail_chars=40,
+    )
+    assert "earlier reasoning omitted" in truncated["reasoning_tail"]
+    assert "FINAL_DECISION_TAIL" in truncated["reasoning_tail"]
+    assert "XXXXX" in truncated["reasoning_tail"] and len(truncated["reasoning_tail"]) < 100

@@ -1130,6 +1130,7 @@ def synthesize_from_reports(
                         )
                         solver_result = f"{picked['correct']}/{picked['total']} correct by the target model"
                     else:
+                        picked = {}
                         solver_result = "no readable evaluation stats returned"
                     last_failed[pair] = {
                         "story": q_rows[0].get("story"),
@@ -1138,6 +1139,10 @@ def synthesize_from_reports(
                         "gate_reason": gate_reason or "too_easy",
                         "solver_result": solver_result,
                     }
+                    if picked.get("solver_trace"):
+                        last_failed[pair]["solver_trace"] = picked["solver_trace"]
+                    if picked.get("selected_option_counts"):
+                        last_failed[pair]["selected_option_counts"] = picked["selected_option_counts"]
                     if gate_log_file is not None:
                         gate_log[-1]["rejected_rows"] = q_rows
                 if gate_log_file is not None:
