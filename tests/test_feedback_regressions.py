@@ -960,3 +960,27 @@ def test_difficulty_gate_band_rejects_zero_solve_missing_stats_and_retries(monke
     assert "0/4 correct by the target model" in prompts_seen[1]
     log = [json.loads(line) for line in log_file.read_text(encoding="utf-8").splitlines()]
     assert [entry["reason"] for entry in log] == ["too_hard_or_unanswerable", None]
+
+
+def test_filter_pipeline_guards_all_failed_and_repair_prompts_enforce_symmetry():
+    import pandas as pd
+    from filter.pipeline import _assign_one, assign_labels
+    from filter.repair.repair_prompts import REPAIR_EASY_PROMPT, REPAIR_UNANSWERABLE_PROMPT
+
+    assert _assign_one("all_failed", True, True, allow_all_failed_as_hard=True) == ("shortcut", "shortcut")
+    assert _assign_one("all_failed", True, False, allow_all_failed_as_hard=False) == ("bad", "unanswerable")
+    assert _assign_one("all_failed", True, False, allow_all_failed_as_hard=True) == ("hard", None)
+
+    input_df = pd.DataFrame([
+        {"story": "s1", "question": "q1", "answer": {"correct_answers": ["a"], "wrong_answers": ["b", "c", "d"]}, "meta": {"id": "id_1"}},
+    ])
+    passk_df = pd.DataFrame([{"sample_id": "id_1", "pass_at_k": 0.0, "bucket": "all_failed"}])
+    ans_df = pd.DataFrame([{"sample_id": "id_1", "label": "answerable", "reason": "ok", "answerable": True}])
+    shortcut_df = pd.DataFrame(columns=["sample_id", "no_story_pass", "no_question_pass", "no_options_pass", "is_shortcut"])
+    labels_df = assign_labels(input_df, passk_df, ans_df, shortcut_df, iter_n=1, allow_all_failed_as_hard=False)
+    assert labels_df.loc[0, "label"] == "bad"
+    assert labels_df.loc[0, "repair_type"] == "unanswerable"
+
+    assert "NEVER use narrator epistemic spoilers" in REPAIR_EASY_PROMPT
+    assert "0.80x-1.20x" in REPAIR_EASY_PROMPT
+    assert "factually true or practically superior" in REPAIR_UNANSWERABLE_PROMPT

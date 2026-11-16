@@ -183,3 +183,13 @@ raw 候选必须依次通过：
 - 先用 400 条 clean 样本进行 GRPO pilot，再决定是否启动完整 2,000 条训练。
 
 该方案保留 feedback 的原生诊断、合成和过滤链路，同时把难度调度和失败机制复现变成可审计字段，避免单纯增加长度后仍然生成容易题或不可判定题。
+
+## Pass@8 审查复盘与流水线加固（2026-11-17）
+
+对 `tombench-repaired-opus-pass8-20261116` 共 1,237 条候选样本（523 条 Gemini 修复 + 714 条 Opus 生成，291 EN / 423 ZH）在 `checkpoint-124` 上执行 `cot` 协议 Pass@8 评测后，得到以下关键经验：
+
+1. **分布漏斗与有效率**：1,143/1,237（92.40%）饱和在 `7–8/8`，仅 **72/1,237（5.82%）** 落在 `2–6/8`（Gemini 修复 30 条，Opus 19 EN + 23 ZH），另有 10 条 `1/8` 与 12 条 `0/8`。人工审查显示 Opus `2–6/8` 中 36/42（85.7%）为高质量 GRPO 样本，而 Gemini 修复 `2–6/8` 为 15/30（50.0%）；12 条 `0/8` 错题中有 **9/12（75%）** 存在可回答性、物理/数学矛盾或文化多义性缺陷，不可不经验证直接作为难题训练。
+2. **Stage 1/2 诊断加固**：`build_batch_diagnosis_prompt` 改为首尾拼接保留 CoT 尾部错误步（`[:300]` + `[-800:]`）；`sample_bad_cases_weighted` 在报告配额高于样本数时采用错位加权循环采样，避免高错率维度丢失配额；`BATCH_DIMENSION_DIAGNOSIS_PROMPT` 与 `_SPOILER_CONSTRAINT_PATTERNS` 禁止下发旁白心理动词、眼神/微笑模板、“随机猜测”元选项与狭窄常量算术规则，并打通 `hard_dimension_error_rate` 自动提升 `hard` 权重。
+3. **Stage 3 Prompt、Schema 与双语校验加固**：严禁旁白剧透动词（`assumed`、`mistook`、`unbeknownst to`、`误以为`、`不知情`、`实际上`），要求关键线索后插入至少一轮中性交互，禁用不对称的 `cannot tell / pick at random` 元选项及双命题捆绑；`_EVIDENCE_CHANNELS` 与 `_NAME_POOL_HINTS` 按全局 `schedule_index` 轮转；`stage3_synthesis.py` 补全中英文防泄漏/防模板/等长校验（含 `Room B.` 防误切与 `\n请选择...` 提示词尾注剥离），写回真实 `report_dimension` / `primary_cognitive_operation` / `difficulty` 元数据，并在配置中显式设置 `presence_penalty: 0`。
+4. **DifficultyGate 窄带与 Fail-Closed**：支持 `[min_solve_rate, max_solve_rate]` 区间（默认开启 `min_solve_rate: 0.125` 拦截 `0/k` 坏题），修复缺失统计 `fail_open` 放行漏洞，并针对 `0/k` 与 `> max_solve_rate` 分流不同重试提示。
+5. **Gemini Repair 与 Filter 飞轮加固**：`feedback/tombench_gemini_repair.py` 移除强制要求 `assumed/thought/...` 旁白剧透的规则，改为按 Pass@8 分流（保留有效的 `2–6/8` 样本不动，对 `7–8/8` 做升难重写、对 `0–1/8` 做可回答性修复）并接入 Stage 3 全套校验；`filter/pipeline.py` 增加 `allow_all_failed_as_hard` 与 `0/k` shortcut 拦截，`filter/repair/repair_prompts.py` 同步纳入上述防剧透与对称性规则。

@@ -56,8 +56,9 @@ Original sample (broken):
 Repair goal:
   - Fix the issue indicated by the failure label.
   - The new story MUST uniquely support exactly the marked correct answer(s).
-  - All wrong answers must be unambiguously wrong given the new story.
-  - Resolve any contradictions, ambiguity, missing info, or label errors.
+  - All wrong answers must be unambiguously wrong given the new story (NEVER leave any distractor factually true or practically superior under the story).
+  - Resolve any contradictions, ambiguity, missing info, physical obstacles (e.g. if transport/tools are missing, ensure the correct answer addresses them), or label errors.
+  - If using approximate quantifiers ('nearly half', 'almost none', '将近一半', '几乎没有'), ensure numeric options do not overlap within ±1/±2 rounding margins.
   - Keep the ToM ability tested by the original question.
 
 """ + _SHARED_OUTPUT_SCHEMA
@@ -80,10 +81,12 @@ Repair goal:
   - Increase CoM/ToM reasoning depth against strong CoT models: replace simple 0-access setups with partial \
 knowledge plus a plausible misleading observation/cue, or introduce a competing preference/norm/indirect-causal conflict.
   - Convey who witnessed what implicitly via physical timing, departures, or truncated messages — NEVER write \
-explicit boolean signposts such as 'completely alone', 'without telling anyone', 'without mentioning', or 'having spoken to neither'.
+explicit boolean signposts such as 'completely alone', 'without telling anyone', 'without mentioning', or 'having spoken to neither', \
+and NEVER use narrator epistemic spoilers ('assumed', 'thought', 'believed', 'mistook', 'misread', 'unbeknownst to', 'did not know/realize', 'in reality', '误以为', '不知情', '实际上').
+  - Avoid any repeated gaze/smile template ('catches eye', 'glances toward', 'smiles') and include at least one neutral intervening beat before the queried final sentence.
   - End the story at the exact queried moment with NO subsequent spoiler action/reply, and keep only one unambiguous answer.
   - You may add an intermediary agent or restructure event order to deepen the reasoning dilemma while preserving the core characters/domain.
-  - Distractors must be balanced in length/specificity and correspond to close-but-wrong CoT reasoning paths.
+  - Distractors must be balanced in length/specificity (0.80x-1.20x), single-claim (no bundled dual-claim clauses), avoid length-biased 'cannot tell / pick at random' meta-options, and correspond to close-but-wrong CoT reasoning paths.
 
 """ + _SHARED_OUTPUT_SCHEMA
 

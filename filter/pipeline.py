@@ -215,16 +215,25 @@ def load_split_df(
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-def _assign_one(bucket: str, answerable: Optional[bool], is_shortcut: Optional[bool]) -> Tuple[str, Optional[str]]:
+def _assign_one(
+    bucket: str,
+    answerable: Optional[bool],
+    is_shortcut: Optional[bool],
+    allow_all_failed_as_hard: bool = True,
+) -> Tuple[str, Optional[str]]:
     """单条样本的决策树规则 → (label, repair_type)。"""
     if bucket == _BUCKET_ALL_PASSED:
         return _LABEL_EASY, "easy"
 
     if bucket == _BUCKET_ALL_FAILED:
-        if answerable == True:  # noqa: E712
-            return _LABEL_HARD, None
-        # answerable False 或 None（解析失败也按 unanswerable 处理保守一些）
-        return _LABEL_BAD, "unanswerable"
+        if answerable != True:  # noqa: E712
+            # answerable False 或 None（解析失败也按 unanswerable 处理保守一些）
+            return _LABEL_BAD, "unanswerable"
+        if is_shortcut == True:  # noqa: E712
+            return _LABEL_SHORTCUT, "shortcut"
+        if not allow_all_failed_as_hard:
+            return _LABEL_BAD, "unanswerable"
+        return _LABEL_HARD, None
 
     # bucket == partial
     if answerable != True:  # noqa: E712
@@ -255,6 +264,7 @@ def assign_labels(
     iter_n: int,
     answerability_enabled: bool = True,
     shortcut_enabled: bool = True,
+    allow_all_failed_as_hard: bool = True,
 ) -> pd.DataFrame:
     """合并三阶段输出 → labels DataFrame。
 
@@ -393,7 +403,9 @@ def assign_labels(
             labels.append(_LABEL_BAD)
             repair_types.append("unanswerable")
             continue
-        lbl, rt = _assign_one(bucket, ans_clean, sc_clean)
+        lbl, rt = _assign_one(
+            bucket, ans_clean, sc_clean, allow_all_failed_as_hard=allow_all_failed_as_hard
+        )
         labels.append(lbl)
         repair_types.append(rt)
 
@@ -479,6 +491,7 @@ def run_single_iteration(
     answerability_enabled: bool = True,
     shortcut_enabled: bool = True,
     open_f1_threshold: float = _OPEN_F1_THRESHOLD,
+    allow_all_failed_as_hard: bool = True,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """一轮决策树评估 + 可选修复。
 
@@ -602,6 +615,7 @@ def run_single_iteration(
             input_df, passk_df, ans_df, shortcut_df, iter_n,
             answerability_enabled=answerability_enabled,
             shortcut_enabled=shortcut_enabled,
+            allow_all_failed_as_hard=allow_all_failed_as_hard,
         )
         labels_df.to_parquet(labels_path, index=False)
 
@@ -697,6 +711,7 @@ def run_filter_loop(
     shortcut_enabled = bool(config.get("shortcut_enabled", _SHORTCUT_ENABLED))
     repair_enabled = bool(config.get("repair_enabled", True))
     open_f1_threshold = float(config.get("open_f1_threshold", _OPEN_F1_THRESHOLD))
+    allow_all_failed_as_hard = bool(config.get("allow_all_failed_as_hard", True))
 
     split_stem = split_file.stem
     split_root = _split_dir(config["output_root"], dataset, split_stem)
@@ -765,6 +780,7 @@ def run_filter_loop(
             repair_enabled=repair_enabled, pass_k=pass_k, shortcut_k=shortcut_k,
             passk_enabled=passk_enabled, answerability_enabled=answerability_enabled,
             shortcut_enabled=shortcut_enabled, open_f1_threshold=open_f1_threshold,
+            allow_all_failed_as_hard=allow_all_failed_as_hard,
         )
         iters_run += 1
         label_counts_by_iter.append({
@@ -801,6 +817,7 @@ def run_filter_loop(
             repair_enabled=False, pass_k=pass_k, shortcut_k=shortcut_k,
             passk_enabled=passk_enabled, answerability_enabled=answerability_enabled,
             shortcut_enabled=shortcut_enabled, open_f1_threshold=open_f1_threshold,
+            allow_all_failed_as_hard=allow_all_failed_as_hard,
         )
         iters_run += 1
         label_counts_by_iter.append({
