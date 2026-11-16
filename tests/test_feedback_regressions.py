@@ -1058,3 +1058,57 @@ def test_too_easy_retry_prompt_enforces_topological_escalation_not_reskinning():
     assert "No Front-Loaded Explanatory Parables" in prompt
     assert "Explicit Retry Delta in `reasoning_trap_plan`" in prompt
     assert "Use a completely different story scenario" not in prompt
+
+
+def test_stage3_rejects_shared_leading_claim_and_numeric_fraction_gloss():
+    shared_prefix = {
+        "story": "White box had 12 pairs left.",
+        "question": "White asked what Chen feels and why.",
+        "answer": {
+            "correct_answers": ["心里发沉，因为三百度那箱几乎没动，老人多半没来"],
+            "wrong_answers": [
+                "心里发沉，因为她觉得自己备货备多了",
+                "心里发沉，因为她担心老人们回家不戴",
+                "心里发沉，因为她觉得白璐只是客套话",
+            ],
+        },
+        "_target_moment": "White box had 12 pairs left.",
+    }
+    assert _validate_synthesized_question(shared_prefix, "ToMBench", difficulty="hard") == (
+        "all_options_share_identical_leading_claim_use_2x2_orthogonal_options"
+    )
+
+    orthogonal_ok = dict(shared_prefix)
+    orthogonal_ok["answer"] = {
+        "correct_answers": ["心里发沉，因为三百度那箱几乎没动，老人多半没来"],
+        "wrong_answers": [
+            "暗自庆幸，因为三百度余货不多且都能退回厂家",
+            "心里发沉，因为她担心老人们回家后很快搁置不戴",
+            "轻松满足，因为登记的五十八位老人全都配上了",
+        ],
+    }
+    assert _validate_synthesized_question(orthogonal_ok, "ToMBench", difficulty="hard") is None
+
+    numeric_gloss = {
+        "story": "Forty meals were listed.",
+        "question": "How many soft meals does Han expect?",
+        "answer": {
+            "correct_answers": ["他估计约有十七八份，略少于一半"],
+            "wrong_answers": [
+                "他估计约有二十二份，超过了一半",
+                "他估计正好有二十份，恰好是一半",
+                "他估计约有十二份，不到三分之一",
+            ],
+        },
+        "_target_moment": "Forty meals were listed.",
+    }
+    assert _validate_synthesized_question(numeric_gloss, "ToMBench", difficulty="hard") == (
+        "numeric_options_contain_fraction_gloss_use_bare_estimates"
+    )
+
+    bare_ok = dict(numeric_gloss)
+    bare_ok["answer"] = {
+        "correct_answers": ["约十七八份"],
+        "wrong_answers": ["约二十二份", "约二十份", "约十二份"],
+    }
+    assert _validate_synthesized_question(bare_ok, "ToMBench", difficulty="hard") is None

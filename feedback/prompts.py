@@ -550,7 +550,10 @@ _DISTRACTOR_STRATEGY_BY_OPERATION: Dict[str, str] = {
     "information_access": (
         "Primary trap: combine genuine partial cues (an overheard fragment, a routine reset, or an unattributed object) "
         "with ground-truth reality so a model confuses partial exposure with full knowledge. "
-        "Secondary trap: what an informed insider would know."
+        "Secondary trap: what an informed insider would know. "
+        "For numeric/proportion estimates: NEVER add a redundant capacity/midpoint confirmation in the story alongside a vague quantifier "
+        "(e.g., do NOT write 'nearly half' AND then explain 'so one 20-portion pot is enough'), and keep ALL 4 options as bare comparable numbers/estimates "
+        "with NO trailing fraction glosses (never write ', 略少于一半' / ', 恰好是一半' / ', just under half')."
     ),
     "recursive_belief": (
         "Primary trap: answer one level shallower than asked OR rely on partial secondhand evidence that Agent A "
@@ -558,11 +561,15 @@ _DISTRACTOR_STRATEGY_BY_OPERATION: Dict[str, str] = {
     ),
     "emotion_attribution": (
         "Primary trap: pair a strong emotional trigger with a competing social/role duty so the model must weigh "
-        "regulation vs outward display; distractors use same-valence emotion from the wrong trigger or unrestrained impulsive action."
+        "regulation vs outward display; distractors use same-valence emotion from the wrong trigger or unrestrained impulsive action. "
+        "If the question asks both 'what emotion and why', NEVER start all 4 options with the same emotion prefix (e.g., all 4 starting with '心里发沉，因为...'); "
+        "use a 2x2 orthogonal design (2 distinct plausible emotions x 2 distinct causal attributions)."
     ),
     "social_inference": (
         "Primary trap: set a conflict between literal courtesy/duty and an underlying personal tension or unstated constraint; "
-        "wrong answers include the face-value routine response and an exaggerated reaction ignoring role constraints."
+        "wrong answers include the face-value routine response and an exaggerated reaction ignoring role constraints. "
+        "For persuasion/request dilemmas: NEVER ask an omniscient effectiveness question ('what will get Agent B to agree?') after Agent B states their exact private objection aloud to a third party; "
+        "instead lock the question onto the requester's partial/misled perspective ('based on what Agent A knows, what would Agent A expect to work?') OR keep Agent B's constraint implicit in earlier actions rather than spoken verbatim."
     ),
     "temporal_reference": (
         "Primary trap: answer 'what to do before/after the WRONG sub-event' — "
@@ -683,7 +690,7 @@ If the question accidentally tests a different cognitive operation, revise it.
 6. {format_specific_rules}
 7. Set meta_difficulty to "{difficulty}" (from the Complexity Specification above)
 8. [NO SPOILER / STOP AT TARGET MOMENT] The story MUST end at or right before the target moment queried by the question. NEVER narrate any subsequent action, reply, execution, or clarification that spoils or executes the answer, and NEVER use narrator belief spoilers ('assumed', 'mistook', 'unbeknownst to', '误以为', '不知情') to hand over the queried mental state
-9. [OPTION SYMMETRY & DETERMINACY] Keep all choices balanced in specificity, syntactic completeness, and approximate length (0.80x-1.20x across options; do NOT make the correct option noticeably longer or more detailed than distractors). Test a single clean claim per option without bundled dual-claim clauses, and avoid subjective moral/politeness tie-breakers or uncalibrated 'cannot tell / pick at random' meta-options
+9. [OPTION SYMMETRY & DETERMINACY] Keep all choices balanced in specificity, syntactic completeness, and approximate length (0.80x-1.20x across options; do NOT make the correct option noticeably longer or more detailed than distractors). Test a single clean claim per option without bundled dual-claim clauses, and avoid subjective moral/politeness tie-breakers or uncalibrated 'cannot tell / pick at random' meta-options; for compound 'emotion + reason' questions, use a 2x2 orthogonal layout (never identical leading emotion prefixes across all 4 options); for numeric/estimate options, give bare numbers/estimates without fraction-definition glosses
 10. [PLAN FIRST] When the JSON schema includes `reasoning_trap_plan`, fill it first with the belief-conflict matrix and per-distractor CoT traps before drafting `target_moment`/`story`/`question` (planning text is stripped before storage; never echo it inside `story` or `question`)
 11. [TARGET MOMENT CONTRACT] When the JSON schema includes `target_moment`, copy the exact final sentence or utterance that the question targets into that field. The story MUST end with that exact text. Do not write any action, reply, confirmation, or consequence after it.
 12. After drafting, verify: (a) cognitive operation is {primary_cognitive_operation}, (b) `target_moment` is the exact story suffix, (c) story stops before any spoiler or narrator mental-state shortcut, (d) all options match in length/detail (0.80x-1.20x) and pass the DISTRACTOR DESIGN self-check
@@ -782,7 +789,7 @@ _ANTI_TEMPLATE_RULES = (
     "- Do NOT use the 'catches eye / glances toward X / smiles / asks a literal question' template, and do not make a gaze or smile the key cue\n"
     "- Do NOT add a whimsical decoy object (goofy, comical, or funny decoration, sticker, painting, umbrella) to support an 'amusement' distractor\n"
     "- Do NOT make the correct answer the only option that ties together every planted detail; at least one distractor must also be consistent with most of the story and fail on exactly one fact\n"
-    "- Physical & quantitative determinacy: if the story includes a physical obstacle (e.g. heavy load, broken tool, towed vehicle), the correct option must resolve it rather than leaving it broken; if using approximate quantifiers ('nearly half', 'almost none', '将近一半', '几乎没有'), never separate numeric options by ±1 or ±2 inside the vague interval unless a post-update recount uniquely closes the exact number"
+    "- Physical & quantitative determinacy: if the story includes a physical obstacle (e.g. heavy load, broken tool, towed vehicle), the correct option must resolve it rather than leaving it broken; if using approximate quantifiers ('nearly half', 'almost none', '将近一半', '几乎没有'), never separate numeric options by ±1 or ±2 inside the vague interval unless a post-update recount uniquely closes the exact number, never add a redundant midpoint gloss in the story (like 'so one 20-portion pot is enough'), and give bare numeric estimates without fraction glosses in options; for persuasion scenarios, keep the target's constraint implicit or ask from the requester's partial perspective rather than omnisciently matching spoken objections"
 )
 
 _GROUNDED_DISTRACTOR_RULES = (

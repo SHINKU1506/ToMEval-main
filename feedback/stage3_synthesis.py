@@ -168,6 +168,41 @@ def _find_template_issue(story: str, q_dict: Dict[str, Any]) -> Optional[str]:
     return None
 
 
+_CAUSAL_PREFIX_SPLIT_RE = re.compile(
+    r"(?:[，,;；]\s*(?:因为|由于|since\b|because\b|as\b)|\s+(?:because|since)\b)",
+    re.IGNORECASE,
+)
+_NUMERIC_QUANTITY_RE = re.compile(
+    r"(?:\d+|[一二两三四五六七八九十百千]+|half|quarter|dozen|score)",
+    re.IGNORECASE,
+)
+_FRACTION_GLOSS_RE = re.compile(
+    r"(?:[，,]\s*|\s+)(?:略少于|略多于|超过了?|不到|不足|恰好是|正好是|也就是|即)(?:总数|全部)?的?(?:一半|二分之一|三分之一|四分之一)|"
+    r",\s*(?:which\s+is\s+)?(?:just\s+under|just\s+over|exactly|precisely)\s+(?:one[- ])?(?:half|third|quarter)\b",
+    re.IGNORECASE,
+)
+
+
+def _find_option_structural_leak(correct: List[str], wrong: List[str]) -> Optional[str]:
+    """Detect shared leading prefixes (non-orthogonal 2-part options) and redundant fraction glosses."""
+    options = correct + wrong
+    prefixes = []
+    for opt in options:
+        parts = _CAUSAL_PREFIX_SPLIT_RE.split(opt, maxsplit=1)
+        if len(parts) == 2 and parts[0].strip():
+            prefixes.append(parts[0].strip().casefold())
+    if len(prefixes) == len(options) and len(set(prefixes)) == 1:
+        return "all_options_share_identical_leading_claim_use_2x2_orthogonal_options"
+
+    glossed = sum(
+        1 for opt in options
+        if _NUMERIC_QUANTITY_RE.search(opt) and _FRACTION_GLOSS_RE.search(opt)
+    )
+    if glossed >= 2:
+        return "numeric_options_contain_fraction_gloss_use_bare_estimates"
+    return None
+
+
 def _find_option_grounding_issue(story: str, correct: List[str], wrong: List[str]) -> Optional[str]:
     """Reject options that introduce unseen named entities or break hedging symmetry."""
     options = correct + wrong
@@ -244,6 +279,9 @@ def _validate_synthesized_question(
         grounding_issue = _find_option_grounding_issue(story, correct, wrong)
         if grounding_issue:
             return grounding_issue
+        structural_leak = _find_option_structural_leak(correct, wrong)
+        if structural_leak:
+            return structural_leak
 
     return None
 
