@@ -22,20 +22,26 @@ _GATED_PROMPT_TYPES = {"mcq_single", "mcq_multi", "mcq_grouped"}
 
 
 class DifficultyGate:
-    """pass@k solve-rate gate. A question passes when solve_rate <= max_solve_rate."""
+    """pass@k solve-rate band gate. A question passes when min_solve_rate <= solve_rate <= max_solve_rate."""
 
     def __init__(
         self,
         solver_llm_config: Dict[str, Any],
         k: int = 4,
         max_solve_rate: float = 0.75,
+        min_solve_rate: float = 0.0,
         protocol: str = "cot",
+        fail_open: bool = False,
     ):
         if k < 1:
             raise ValueError("difficulty gate k must be >= 1")
         self.k = int(k)
+        self.min_solve_rate = float(min_solve_rate)
         self.max_solve_rate = float(max_solve_rate)
+        if self.min_solve_rate > self.max_solve_rate:
+            raise ValueError("difficulty gate min_solve_rate must be <= max_solve_rate")
         self.protocol = protocol
+        self.fail_open = bool(fail_open)
         config = dict(solver_llm_config)
         config.update(llm_overrides_for(protocol))
         self.model_name = str(config.get("model_name", "unknown"))
@@ -66,10 +72,18 @@ class DifficultyGate:
             for sid, (c, t) in counts.items()
         }
 
-    def passes(self, stats: Optional[Dict[str, Any]]) -> bool:
+    def rejection_reason(self, stats: Optional[Dict[str, Any]]) -> Optional[str]:
         if not stats or not stats.get("total"):
-            return True
-        return stats["solve_rate"] <= self.max_solve_rate
+            return None if self.fail_open else "missing_eval_stats"
+        rate = float(stats["solve_rate"])
+        if rate > self.max_solve_rate:
+            return "too_easy"
+        if rate < self.min_solve_rate:
+            return "too_hard_or_unanswerable"
+        return None
+
+    def passes(self, stats: Optional[Dict[str, Any]]) -> bool:
+        return self.rejection_reason(stats) is None
 
 
 def build_difficulty_gate(gate_config: Optional[Dict[str, Any]]) -> Optional[DifficultyGate]:
@@ -83,5 +97,7 @@ def build_difficulty_gate(gate_config: Optional[Dict[str, Any]]) -> Optional[Dif
         solver_llm_config=llm,
         k=int(gate_config.get("k", 4)),
         max_solve_rate=float(gate_config.get("max_solve_rate", 0.75)),
+        min_solve_rate=float(gate_config.get("min_solve_rate", 0.0)),
         protocol=str(gate_config.get("protocol", "cot")),
+        fail_open=bool(gate_config.get("fail_open", False)),
     )

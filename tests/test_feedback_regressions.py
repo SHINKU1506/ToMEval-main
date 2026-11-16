@@ -900,3 +900,63 @@ def test_stage3_bilingual_validators_footer_strip_and_metadata_preservation(monk
     assert rows[0]["meta"]["report_dimension"] == "Belief: Content false beliefs__zh"
     assert rows[0]["meta"]["primary_cognitive_operation"] == "belief_state_update"
     assert rows[0]["meta"]["difficulty"] == "hard"
+
+
+def test_difficulty_gate_band_rejects_zero_solve_missing_stats_and_retries(monkeypatch, tmp_path):
+    import feedback.difficulty_gate as dg
+    import feedback.stage3_synthesis as stage3
+    from types import SimpleNamespace
+
+    gate = dg.build_difficulty_gate({
+        "enabled": True,
+        "k": 4,
+        "min_solve_rate": 0.125,
+        "max_solve_rate": 0.75,
+        "fail_open": False,
+        "llm": {"model_name": "checkpoint-124", "api_key": "k", "api_url": "u"},
+    })
+    assert gate is not None
+    assert not gate.passes(None)
+    assert gate.rejection_reason(None) == "missing_eval_stats"
+    assert not gate.passes({"correct": 0, "total": 4, "solve_rate": 0.0})
+    assert gate.rejection_reason({"correct": 0, "total": 4, "solve_rate": 0.0}) == "too_hard_or_unanswerable"
+    assert gate.passes({"correct": 2, "total": 4, "solve_rate": 0.5})
+    assert not gate.passes({"correct": 4, "total": 4, "solve_rate": 1.0})
+
+    story = "Maya read the first page of the revised schedule."
+    prompts_seen = []
+
+    class FakeClient:
+        def batch_generate_structure(self, prompts, schema, mode="auto", desc=""):
+            prompts_seen.extend(prompts)
+            q = ToMBenchQuestionFlat(
+                reasoning_trap_plan="plan",
+                target_moment=story,
+                story=story,
+                question="When does Maya expect the meeting? A. At noon B. At ten C. At two D. At four",
+                correct_letter="A",
+                meta_ability="false_belief",
+                meta_id="x",
+            )
+            return [SimpleNamespace(content=SimpleNamespace(questions=[q])) for _ in prompts]
+
+    calls = {"n": 0}
+
+    def fake_evaluate(rows, dataset_name):
+        calls["n"] += 1
+        correct = 0 if calls["n"] == 1 else 2
+        return {r["meta"]["id"]: {"correct": correct, "total": 4, "solve_rate": correct / 4} for r in rows}
+
+    gate.evaluate = fake_evaluate
+    monkeypatch.setattr(stage3.runner, "create_llm_client", lambda cfg: FakeClient())
+    log_file = tmp_path / "gate_band.jsonl"
+    rows, stats = stage3.synthesize_from_reports(
+        [{"dimension": "d", "primary_cognitive_operation": "belief_state_update", "_meta": {"lang": "en"}}],
+        "ToMBench", {}, samples_per_report=1, max_retries=2,
+        target_difficulty="hard", difficulty_gate=gate, gate_log_file=log_file,
+    )
+    assert len(rows) == 1 and stats["difficulty_gate_rejected"] == 1
+    assert "Unanswerable / Broken" in prompts_seen[1]
+    assert "0/4 correct by the target model" in prompts_seen[1]
+    log = [json.loads(line) for line in log_file.read_text(encoding="utf-8").splitlines()]
+    assert [entry["reason"] for entry in log] == ["too_hard_or_unanswerable", None]

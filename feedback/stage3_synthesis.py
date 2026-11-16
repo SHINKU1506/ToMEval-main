@@ -1042,12 +1042,26 @@ def synthesize_from_reports(
                 for pair, q_rows in gate_candidates.items():
                     row_stats = [solve_stats.get(str((r.get("meta") or {}).get("id"))) for r in q_rows]
                     passed = all(difficulty_gate.passes(st) for st in row_stats)
+                    reasons = []
+                    for st in row_stats:
+                        if hasattr(difficulty_gate, "rejection_reason"):
+                            r = difficulty_gate.rejection_reason(st)
+                            if r:
+                                reasons.append(r)
+                        elif not difficulty_gate.passes(st):
+                            reasons.append("too_easy")
+                    gate_reason = (
+                        "too_hard_or_unanswerable"
+                        if "too_hard_or_unanswerable" in reasons
+                        else ("too_easy" if "too_easy" in reasons else ("missing_eval_stats" if reasons else None))
+                    )
                     gate_log.append({
                         "pair": list(pair),
                         "round": round_idx + 1,
                         "solver": difficulty_gate.model_name,
                         "stats": row_stats,
                         "passed": passed,
+                        "reason": gate_reason,
                     })
                     if passed:
                         results[pair] = q_rows
@@ -1055,13 +1069,22 @@ def synthesize_from_reports(
                         success_this_round += 1
                         continue
                     gate_rejected += 1
-                    worst = max((st for st in row_stats if st), key=lambda st: st["solve_rate"])
-                    # 不带 _failure_reason → 触发 prompt 中的 "Previous Attempt Was Too Easy" 分支
+                    valid_stats = [st for st in row_stats if st]
+                    if valid_stats:
+                        picked = (
+                            min(valid_stats, key=lambda st: st["solve_rate"])
+                            if gate_reason == "too_hard_or_unanswerable"
+                            else max(valid_stats, key=lambda st: st["solve_rate"])
+                        )
+                        solver_result = f"{picked['correct']}/{picked['total']} correct by the target model"
+                    else:
+                        solver_result = "no readable evaluation stats returned"
                     last_failed[pair] = {
                         "story": q_rows[0].get("story"),
                         "question": q_rows[0].get("question"),
                         "answer": q_rows[0].get("answer"),
-                        "solver_result": f"{worst['correct']}/{worst['total']} correct by the target model",
+                        "gate_reason": gate_reason or "too_easy",
+                        "solver_result": solver_result,
                     }
                     if gate_log_file is not None:
                         gate_log[-1]["rejected_rows"] = q_rows

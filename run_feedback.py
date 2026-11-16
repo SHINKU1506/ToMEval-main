@@ -229,7 +229,8 @@ def run_pipeline(config_path: str):
         if difficulty_gate is not None:
             logger.info(
                 f"  🎯 难度闸门: {difficulty_gate.model_name} pass@{difficulty_gate.k}, "
-                f"solve_rate ≤ {difficulty_gate.max_solve_rate}, 适用难度 {list(gate_difficulties)}"
+                f"{difficulty_gate.min_solve_rate} ≤ solve_rate ≤ {difficulty_gate.max_solve_rate}, "
+                f"fail_open={difficulty_gate.fail_open}, 适用难度 {list(gate_difficulties)}"
             )
 
         for ds_info in synthesis_datasets:

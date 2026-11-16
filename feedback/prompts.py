@@ -994,6 +994,21 @@ def build_stage2_generation_from_report_prompt(
                 "Return a complete object matching the schema exactly. Do not omit required fields.\n\n"
                 f"Previous attempt metadata: {prev_str}\n\n"
             )
+        elif isinstance(previous_question, dict) and previous_question.get("gate_reason") == "too_hard_or_unanswerable":
+            solver_result = previous_question.get("solver_result") or "0 times"
+            retry_feedback = (
+                "## ⚠ RETRY — Previous Attempt Was Unanswerable / Broken (0% Solve Rate)\n"
+                "The question below was rejected because the solver model solved it below the minimum "
+                f"answerability band ({solver_result}), indicating a likely premise gap, physical contradiction, "
+                "overlapping numeric estimate, or factually true distractor.\n\n"
+                "### Previous Question (rejected)\n"
+                f"```json\n{prev_str}\n```\n\n"
+                "### How to fix answerability while keeping genuine ToM difficulty\n"
+                "- Ensure every premise needed for the correct option is explicitly observable or inferable before target_moment\n"
+                "- Ensure NO distractor remains factually true or practically superior under the story constraints\n"
+                "- If using approximate quantifiers ('nearly half', 'almost none', '将近一半', '几乎没有'), ensure options are separated beyond rounding ambiguity or closed by a second-perspective count\n"
+                "- Avoid genuine cultural/moral ties; anchor the target emotion/norm in explicit prior commitments\n\n"
+            )
         else:
             solver_result = previous_question.get("solver_result") if isinstance(previous_question, dict) else None
             retry_feedback = (

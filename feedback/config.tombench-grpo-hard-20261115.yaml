@@ -60,7 +60,9 @@ synthesis:
   difficulty_gate:
     enabled: true
     k: 4
-    max_solve_rate: 0.75   # reject when qwen3.8-flash solves >= 4/4
+    min_solve_rate: 0.125  # reject 0/4 likely-broken/unanswerable questions
+    max_solve_rate: 0.75   # reject when solver solves > 3/4
+    fail_open: false
     protocol: cot
     difficulties: [hard]
 
