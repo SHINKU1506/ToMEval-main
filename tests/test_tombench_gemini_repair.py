@@ -23,6 +23,8 @@ def test_repair_prompt_contains_recent_hardening_contracts():
     assert "without telling anyone" in prompt
     assert "gaze/smile" in prompt.lower()
     assert "DIFFICULTY ESCALATION" in prompt
+    assert "No Distractor-Killing Patches" in prompt
+    assert "counter-directional partial cue" in prompt.lower()
     assert "recent commits" not in prompt
     assert "previous_error_hint" in prompt
 

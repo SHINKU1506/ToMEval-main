@@ -78,8 +78,12 @@ Original sample (too easy):
   Marked wrong:   {wrong_answers}
 
 Repair goal:
-  - Increase CoM/ToM reasoning depth against strong CoT models: replace simple 0-access setups with partial \
-knowledge plus a plausible misleading observation/cue, or introduce a competing preference/norm/indirect-causal conflict.
+  - Increase CoM/ToM reasoning depth against strong CoT models without 1-to-1 structural re-skinning: add a new reasoning hop \
+(e.g. 2nd-order belief or two sequential updates with a partial rollback), a counter-directional partial observation/cue \
+that tempts a wrong option (NEVER let the partial cue reinforce the correct answer), or a competing preference/norm/indirect-causal conflict.
+  - No Distractor-Killing Patches & No Front-Loaded Parables: NEVER insert convenience sentences that render a strong distractor \
+physically/factually impossible, and NEVER open with an explanatory prior-event parable that spells out the ending's causal mechanism; \
+keep distractors physically live and failing only by epistemic access or timing.
   - Convey who witnessed what implicitly via physical timing, departures, or truncated messages — NEVER write \
 explicit boolean signposts such as 'completely alone', 'without telling anyone', 'without mentioning', or 'having spoken to neither', \
 and NEVER use narrator epistemic spoilers ('assumed', 'thought', 'believed', 'mistook', 'misread', 'unbeknownst to', 'did not know/realize', 'in reality', '误以为', '不知情', '实际上').

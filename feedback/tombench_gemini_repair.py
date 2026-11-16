@@ -50,8 +50,11 @@ def build_repair_prompt(row: Dict[str, Any], stats: Dict[str, Any], last_error: 
     else:
         mode_guidance = (
             "Mode: DIFFICULTY ESCALATION (solver solved >= 7/8 — currently too easy for CoT).\n"
-            "- Rewrite the scenario and question (do NOT copy the old easy question verbatim) by adding an intermediate state update, "
-            "a competing perspective/constraint conflict, and at least one neutral intervening beat before target_moment.\n"
+            "- Do NOT do a 1-to-1 structural re-skinning; rewrite the scenario and question (do NOT copy the old easy question verbatim) "
+            "by adding a new reasoning hop (e.g., 2nd-order belief or two sequential updates with a partial rollback), a counter-directional partial cue "
+            "that tempts a wrong option (NEVER let the partial cue reinforce the correct answer), and at least one neutral intervening beat before target_moment.\n"
+            "- No Distractor-Killing Patches & No Front-Loaded Parables: NEVER insert convenience facts that make a strong distractor physically impossible "
+            "and NEVER open with an explanatory prior-event parable; keep distractors physically live and failing only on epistemic access or timing.\n"
             "- Ensure the strongest wrong option reflects what a CoT solver picks if it skips the target mental-state update."
         )
     retry_note = f"\nPrevious validation rejection: {last_error}. Fix this error strictly.\n" if last_error else ""

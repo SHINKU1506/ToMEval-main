@@ -1030,5 +1030,31 @@ def test_filter_pipeline_guards_all_failed_and_repair_prompts_enforce_symmetry()
     assert labels_df.loc[0, "repair_type"] == "unanswerable"
 
     assert "NEVER use narrator epistemic spoilers" in REPAIR_EASY_PROMPT
+    assert "No Distractor-Killing Patches" in REPAIR_EASY_PROMPT
     assert "0.80x-1.20x" in REPAIR_EASY_PROMPT
     assert "factually true or practically superior" in REPAIR_UNANSWERABLE_PROMPT
+
+
+def test_too_easy_retry_prompt_enforces_topological_escalation_not_reskinning():
+    prompt = build_stage2_generation_from_report_prompt(
+        {
+            "dimension": "Belief: Content false beliefs",
+            "primary_cognitive_operation": "belief_state_update",
+            "_meta": {"lang": "en"},
+        },
+        "ToMBench",
+        target_difficulty="hard",
+        previous_question={
+            "story": "Old story.",
+            "question": "Old question?",
+            "answer": {"correct_answers": ["A"], "wrong_answers": ["B", "C", "D"]},
+            "gate_reason": "too_easy",
+            "solver_result": "4/4 correct by checkpoint-124",
+        },
+    )
+    assert "No Structural Isomorphism" in prompt
+    assert "Counter-Directional Partial Cue" in prompt
+    assert "No Distractor-Killing Patches" in prompt
+    assert "No Front-Loaded Explanatory Parables" in prompt
+    assert "Explicit Retry Delta in `reasoning_trap_plan`" in prompt
+    assert "Use a completely different story scenario" not in prompt

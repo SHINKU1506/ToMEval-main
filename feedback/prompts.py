@@ -603,7 +603,8 @@ _DIFFICULTY_RULES: Dict[str, str] = {
     "hard": (
         "Hard difficulty rules (engineered against strong CoT reasoning models):\n"
         "- Story: 5-8 sentences, at least 3 agents, with overlapping and competing partial knowledge states\n"
-        "- Partial Knowledge + Misleading Attribution: instead of giving the target agent zero access, give them a genuine partial observation or ambiguous secondhand cue that makes a flawed attribution initially plausible unless CoT reconciles event order and source limits\n"
+        "- Partial Knowledge + Misleading Attribution: instead of giving the target agent zero access, give them a genuine partial observation or ambiguous secondhand cue that points toward a WRONG option (counter-directional cue) unless CoT reconciles event order and source limits — NEVER let the partial cue reinforce the correct answer\n"
+        "- No Distractor-Killing Patches & No Front-Loaded Parables: NEVER add convenience sentences that make a strong distractor physically or factually impossible (e.g. an inspector cancelling the check, a rival driving away, or past recipients confirming daily use); keep distractors physically live so they fail ONLY by epistemic access or timing. Do NOT open the story with an explanatory prior-event parable that spells out the ending's causal mechanism\n"
         "- Competing Cross-Dimension Conflict: anchor the dilemma in at least one high-tension conflict — (a) preference/constraint collision, (b) indirect upstream causal link behind a misleading surface symptom, or (c) suppressed emotion / social-norm duty tested via concrete action rather than a bare label\n"
         "- Include at least two sequential updates where physical timing, departures, or truncated interactions leave different agents with asymmetric views, PLUS at least one brief neutral operational action or exchange before target_moment so the decisive cue is not isolated in the penultimate clause\n"
         "- NEVER write explicit boolean signposts such as 'working completely alone', 'without telling anyone', 'having spoken to neither', 'without mentioning', 'privately discovered', 'out of earshot', '独自一人', '没有告诉任何人', '未向任何人提起', or '毫不知情' — convey access boundaries implicitly through concrete actions and timing\n"
@@ -1020,19 +1021,20 @@ def build_stage2_generation_from_report_prompt(
         else:
             solver_result = previous_question.get("solver_result") if isinstance(previous_question, dict) else None
             retry_feedback = (
-            "## ⚠ RETRY — Previous Attempt Was Too Easy\n"
-            "The question below was generated for this same error pattern but rejected because "
-            f"the target model answered it correctly too often ({solver_result or 'every time'}). "
-            "Study what made it too easy, then generate a HARDER version.\n\n"
-            "### Previous Question (rejected)\n"
-            f"```json\n{prev_str}\n```\n\n"
-            "### How to make it harder\n"
-            "- Add more surface-level misdirection in the story that points toward a wrong answer\n"
-            "- Make at least one wrong answer represent EXACTLY what the model outputs when it "
-            f"skips {primary_op} — it must be irresistible to a model that shortcuts\n"
-            "- Use a completely different story scenario (new names, setting, situation)\n"
-            "- Do not make the correct option the only one that integrates all planted details; "
-            "make the strongest distractor consistent with all but one decisive fact\n\n"
+                "## ⚠ RETRY — Previous Attempt Was Too Easy\n"
+                "The question below was generated for this same error pattern but rejected because "
+                f"the target model answered it correctly too often ({solver_result or 'every time'}). "
+                "Do NOT do a 1-to-1 re-skinning (merely swapping character names, props, or settings while keeping the same causal graph). "
+                "You MUST upgrade the reasoning topology so a 32k CoT solver cannot trivially track it.\n\n"
+                "### Previous Question (rejected)\n"
+                f"```json\n{prev_str}\n```\n\n"
+                "### Mandatory Structural Escalation Rules (NOT mere surface re-skinning)\n"
+                "- **No Structural Isomorphism**: Keep or change the setting as needed, but ADD a new reasoning hop — e.g., escalate a 1st-order unobserved swap into a 2nd-order belief-about-belief question ('What does A think B expects/intends...'), OR replace a single update with two sequential updates where an intermediate partial rollback/re-labeling creates a competing stale belief.\n"
+                "- **Counter-Directional Partial Cue**: Make the target agent's partial observation (overheard fragment, text, label, or visible trace) point toward a WRONG option so naive CoT trusts it, while ONLY reconciling earlier timing/access boundaries proves the correct option. NEVER let the partial cue reinforce the correct answer.\n"
+                "- **No Distractor-Killing Patches**: NEVER insert convenience sentences in the story that render a strong distractor physically/factually impossible (e.g., do NOT write that an inspector left/cancelled the check, that a rival drove away, or that prior users confirmed daily use). Keep every distractor physically live so it fails ONLY on epistemic access or timing.\n"
+                "- **No Front-Loaded Explanatory Parables**: Do NOT open with a prior-event story that explicitly explains the ending's causal trick; plant clues as incidental operational facts inside the current scene.\n"
+                "- **Explicit Retry Delta in `reasoning_trap_plan`**: Inside `reasoning_trap_plan`, first state (1) the exact leak/shortcut that made the rejected draft too easy, (2) the new topological hop or counter-directional cue added here, and (3) why the strongest distractor stays physically live without a distractor-killing patch. Make at least one wrong answer match what a model outputs if it skips "
+                f"{primary_op} and stays consistent with all but one decisive fact.\n\n"
             )
     else:
         retry_feedback = ""
