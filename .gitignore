@@ -57,6 +57,7 @@ scripts/*
 !scripts/sync_to_tomresults.py
 !scripts/__init__.py
 !scripts/synthesize_grpo_data.py
+!scripts/tombench_gemini_repair.py
 experiment_configs/
 logs/
 filter_inputs/
@@ -79,6 +80,7 @@ AGENTS.md
 tests/*
 !tests/test_synthesize_grpo_data.py
 !tests/test_feedback_regressions.py
+!tests/test_tombench_gemini_repair.py
 figures/
 .pytest_cache/
 
