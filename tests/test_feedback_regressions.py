@@ -741,6 +741,54 @@ def test_difficulty_gate_scores_with_eval_pipeline(monkeypatch):
     assert not gate.passes({"correct": 4, "total": 4, "solve_rate": 1.0})
 
 
+def test_difficulty_gate_does_not_count_missing_or_unparseable_answers_as_wrong(monkeypatch):
+    import feedback.difficulty_gate as dg
+
+    row = {
+        "story": "Maya saw the clock.",
+        "question": "What did Maya see?",
+        "answer": {"correct_answers": ["The clock"], "wrong_answers": ["The door", "A bell", "A lamp"]},
+        "meta": {"id": "clock", "lang": "en"},
+    }
+    responses = ["\\boxed{A}", "\\boxed{B}", None, "No answer available."]
+
+    class FakeContentClient:
+        def batch_generate(self, prompts, desc="", system_prompts=None):
+            from src.llm.client import LLMResponse
+
+            assert len(prompts) == 1
+            return [LLMResponse(content=responses.pop(0), reasoning="")]
+
+    monkeypatch.setattr(dg.runner, "create_content_client", lambda cfg: FakeContentClient())
+    # Keep the production judge and gate; fix the option positions for these four responses.
+    monkeypatch.setattr(
+        "src.evaluation.prediction.build_option_bundle",
+        lambda *args, **kwargs: (
+            {"A": "The clock", "B": "The door", "C": "A bell", "D": "A lamp"},
+            ["A"], ["B", "C", "D"], 0,
+        ),
+    )
+    gate = dg.DifficultyGate(
+        {"model_name": "mock", "api_key": "k", "api_url": "u"},
+        k=4, min_solve_rate=0.25, max_solve_rate=0.75,
+    )
+    stats = gate.evaluate([row], "ToMBench")["clock"]
+    assert not gate.passes(stats)
+    assert gate.rejection_reason(stats) == "missing_eval_stats"
+    assert stats["total"] == 2
+
+
+def test_synthesis_prompt_treats_incomplete_gate_scoring_as_a_retry_not_a_difficulty_signal():
+    from feedback.prompts import build_stage2_generation_from_report_prompt
+
+    prompt = build_stage2_generation_from_report_prompt(
+        {"dimension": "belief"}, "ToMBench", target_count=1, target_difficulty="hard",
+        previous_question={"story": "Previous draft", "gate_reason": "missing_eval_stats"},
+    )
+    assert "Previous Attempt Could Not Be Scored" in prompt
+    assert "Previous Attempt Was Too Easy" not in prompt
+
+
 def test_diagnosis_prompt_preserves_cot_head_and_tail_and_sanitizes_anti_patterns():
     from feedback.prompts import build_batch_diagnosis_prompt, _sanitize_report_items
 

@@ -1,9 +1,9 @@
 """
-难度闭环：用 solver 模型对合成题跑 pass@k，过易的题打回重写。
+难度闭环：用 solver 模型对合成题跑 k 次，区分难度不合格和判分不完整。
 
 复用评测链路（predict_records + judge_repeat），因此 prompt 排版、选项 shuffle、
-\\boxed{} 抽取与正式评测一致。只对 MCQ 题型判分；open 题和被 prepare_samples
-改写 sample_id 的题（如 EmoBench EU 合并）视为通过。
+\\boxed{} 抽取与正式评测一致。只有收到 k 个可判分的 MCQ 答案才使用分数；
+判分不完整时默认拒绝。
 """
 
 import logging
@@ -65,6 +65,14 @@ class DifficultyGate:
         counts: Dict[str, List[int]] = defaultdict(lambda: [0, 0])
         for record, result in zip(gated, results):
             entry = counts[record["sample_id"]]
+            if result.get("error_reason") not in (None, "wrong_answer"):
+                continue
+            options = record.get("options")
+            if options:
+                extracted = result["extracted"]
+                letters = [extracted] if isinstance(extracted, str) else extracted
+                if not letters or any(letter not in options for letter in letters):
+                    continue
             entry[0] += int(bool(result.get("is_correct")))
             entry[1] += 1
         return {
@@ -73,7 +81,7 @@ class DifficultyGate:
         }
 
     def rejection_reason(self, stats: Optional[Dict[str, Any]]) -> Optional[str]:
-        if not stats or not stats.get("total"):
+        if not stats or stats.get("total") != self.k:
             return None if self.fail_open else "missing_eval_stats"
         rate = float(stats["solve_rate"])
         if rate > self.max_solve_rate:

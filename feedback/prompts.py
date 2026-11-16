@@ -994,6 +994,14 @@ def build_stage2_generation_from_report_prompt(
                 "Return a complete object matching the schema exactly. Do not omit required fields.\n\n"
                 f"Previous attempt metadata: {prev_str}\n\n"
             )
+        elif isinstance(previous_question, dict) and previous_question.get("gate_reason") == "missing_eval_stats":
+            retry_feedback = (
+                "## RETRY — Previous Attempt Could Not Be Scored\n"
+                "The solver did not return a complete set of usable answers, so there is no "
+                "difficulty result for this attempt. Generate another question for the same "
+                "diagnosis and requested difficulty without inferring that the previous draft "
+                "was too easy or too hard.\n\n"
+            )
         elif isinstance(previous_question, dict) and previous_question.get("gate_reason") == "too_hard_or_unanswerable":
             solver_result = previous_question.get("solver_result") or "0 times"
             retry_feedback = (
