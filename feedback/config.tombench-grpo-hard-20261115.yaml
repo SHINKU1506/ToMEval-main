@@ -12,7 +12,7 @@ synthesis_model:
   presence_penalty: 0
   max_tokens: 32768
   max_workers: 8
-  enable_thinking: false
+  enable_thinking: true
   retry_enable_thinking: true
 
 roles:
@@ -23,7 +23,7 @@ roles:
     max_tokens: 32768
     temperature: 0.6
     presence_penalty: 0
-    enable_thinking: false
+    enable_thinking: true
   synthesis:
     api_profile: synthesis
     model_name: gemini-4-hydrogen
@@ -31,7 +31,7 @@ roles:
     max_tokens: 32768
     temperature: 0.6
     presence_penalty: 0
-    enable_thinking: false
+    enable_thinking: true
     retry_enable_thinking: true
   difficulty_gate:
     # pass@k solver; sampling params are overridden by the cot protocol.

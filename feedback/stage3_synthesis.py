@@ -973,7 +973,12 @@ def synthesize_from_reports(
         success_this_round = 0
         round_llm_config = dict(synthesis_llm_config)
         retry_think = round_llm_config.pop("retry_enable_thinking", True)
-        if round_idx > 0 and retry_think:
+        explicit_disable = (
+            round_llm_config.get("enable_thinking") is False and retry_think is False
+        )
+        if not explicit_disable and (
+            target_difficulty in ("hard", "hard_only", "hard_mix") or retry_think
+        ):
             round_llm_config["enable_thinking"] = True
         client = runner.create_llm_client(round_llm_config)
         for batch_start in range(0, len(gen_prompts), batch_size):

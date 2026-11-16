@@ -1165,6 +1165,19 @@ def test_synthesis_enables_thinking_on_retry_rounds(monkeypatch):
         difficulty_gate=GateOnce(),
     )
     assert len(rows) == 1
-    assert seen_thinking == [False, True]
+    assert seen_thinking == [True, True]
+
+    seen_thinking.clear()
+    rows_disabled, _ = stage3.synthesize_from_reports(
+        [{"dimension": "d", "primary_cognitive_operation": "belief_state_update", "_meta": {"lang": "en"}}],
+        "ToMBench",
+        {"model_name": "claude-opus-5-5", "enable_thinking": False, "retry_enable_thinking": False},
+        samples_per_report=1,
+        max_retries=2,
+        target_difficulty="hard",
+        difficulty_gate=GateOnce(),
+    )
+    assert len(rows_disabled) == 1
+    assert seen_thinking == [False, False]
     assert "counter-directional" in ToMBenchQuestionFlat.model_fields["reasoning_trap_plan"].description
     assert "new topological hop" in SYNTHESIS_FORMAT_REGISTRY["ToMBench"]["json_skeleton"]["questions"][0]["reasoning_trap_plan"]

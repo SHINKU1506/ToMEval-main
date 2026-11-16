@@ -16,7 +16,7 @@ synthesis_model:
   temperature: 0.6
   max_tokens: 32768
   max_workers: 16
-  enable_thinking: false
+  enable_thinking: true
   system_prompt: ""
   request_interval_seconds: 1    # 每两次请求提交之间的最小间隔（秒），避免触发 rate limit
 
@@ -27,7 +27,7 @@ roles:
     max_workers: 4
     max_tokens: 32768
     temperature: 0.6
-    enable_thinking: false
+    enable_thinking: true
 
 # ── 路径配置 ─────────────────────────────────────────────────────────────────
 output_path: feedback_output
