@@ -1413,3 +1413,273 @@ def test_report_sanitizer_preserves_negated_guardrails_and_expands_binary_mcq():
     assert "other than glances or smiles" in prompt
     assert "Nothing after the utterance" in prompt
     assert "expand them into 4 distinct, parallel proposition/explanation options" in prompt
+
+
+def test_option_grounding_accepts_plural_weekdays_and_months_and_reports_ungrounded_token():
+    from feedback.stage3_synthesis import _find_ungrounded_option_entity
+
+    draft_saturdays = {
+        "story": (
+            "Every Monday at the Harbor Ledger, Sylvia, the city editor, initials each change on the pitch board "
+            "before the planning meeting, and this week she initialed two of Damon's: his flood-damage pitch, struck "
+            "through with Warren's name written beside it, and a new card in Damon's hand reading 'Ferry closure, the "
+            "one I dropped last spring for desk shifts.' On Wednesday the weekend rota came back with Damon's name in "
+            "the Saturday desk slot again, the only day the ferry crews had agreed to talk on the record. Tessa, back "
+            "from two days at the courthouse, stopped by Sylvia's office and said Damon had told her, 'The desk can't "
+            "run short on a Saturday, so the reporting can wait,' adding that his flood notes were still spread across "
+            "his desk. Sylvia told Warren she would speak to Damon herself and tell him that both things count: "
+            "keeping the desk covered and the story he pitched for himself. Warren nodded and carried the flood folder "
+            "back to his own desk. Sylvia signed off the page-three proofs, sent them down to layout, and pulled up "
+            "the Saturday rota on her screen. Then she walked to Damon's desk, moved a stack of flood clippings aside, "
+            "and sat on the corner of it."
+        ),
+        "question": "As Sylvia sits down at Damon's desk, which approach best fits what she told Warren she would say, given what she knows about Damon?",
+        "answer": {
+            "correct_answers": [
+                "She tells him the desk needs his steady Saturdays, and the ferry closure he dropped last spring deserves its turn."
+            ],
+            "wrong_answers": [
+                "She tells him the desk can easily run short one Saturday, so the worry he gave Tessa is unfounded.",
+                "She tells him the desk needs his steady Saturdays, and the flood-damage piece on his desk deserves its turn.",
+                "She moves his Saturday desk slot on the rota over to Warren, so that the ferry day is already cleared.",
+            ],
+        },
+        "_target_moment": "Then she walked to Damon's desk, moved a stack of flood clippings aside, and sat on the corner of it.",
+    }
+    assert _validate_synthesized_question(draft_saturdays, "ToMBench", difficulty="hard") is None
+
+    draft_fridays = {
+        "story": (
+            "Sylvia, the metro editor, signs off the newsroom's room bookings each week, and every Friday since November "
+            "the small archive room, where the county stores its old flood maps, has been booked from four to six under "
+            "Tessa's name. On Monday Warren, the deputy editor, handed Sylvia the new rota: Tessa had put herself down "
+            "for every weekend breaking-news shift through March, plus the election-night liveblog. When Sylvia brought "
+            "up the river-flooding feature Tessa had pitched last autumn, which was shelved the week Damon went on "
+            "leave and Tessa took over his desk, Warren shook his head and said Tessa had told him, 'That river piece "
+            "is dead, forget it,' while she emptied the pitch folder that same week. Damon, back from leave and "
+            "reading the rota over Warren's shoulder, said Tessa had told him the liveblog was the shift everyone in "
+            "the building fights for. Sylvia told Warren she would talk to Tessa herself and tell her that the desk "
+            "needs reporters it can rely on, but that every reporter also needs one piece that is truly her own. Warren "
+            "nodded, signed the overtime sheet, and went down to the print room. Sylvia printed the rota, laid it face "
+            "down on her desk, and called Tessa into her office."
+        ),
+        "question": "Based on what Sylvia knows, which approach best fits the message she told Warren she would give Tessa?",
+        "answer": {
+            "correct_answers": [
+                "She tells Tessa the desk relies on her, and the river feature she keeps researching on Fridays deserves its own slot."
+            ],
+            "wrong_answers": [
+                "She tells Tessa the desk relies on her, and the election-night liveblog Damon praised is a piece to make her own.",
+                "She skips the talk and crosses Tessa's name off the March weekend shifts on Warren's printed rota herself.",
+                "She tells Tessa the desk relies on her, and since Tessa called the river piece dead, a fresh pitch can be her own.",
+            ],
+        },
+        "_target_moment": "Sylvia printed the rota, laid it face down on her desk, and called Tessa into her office.",
+    }
+    assert _validate_synthesized_question(draft_fridays, "ToMBench", difficulty="hard") is None
+
+    unseen_person = dict(draft_saturdays)
+    unseen_person["answer"] = {
+        "correct_answers": draft_saturdays["answer"]["correct_answers"],
+        "wrong_answers": [
+            "She tells him Miriam already took the Saturday desk shift so he can leave.",
+            draft_saturdays["answer"]["wrong_answers"][1],
+            draft_saturdays["answer"]["wrong_answers"][2],
+        ],
+    }
+    assert _find_ungrounded_option_entity(
+        unseen_person["story"],
+        unseen_person["answer"]["correct_answers"] + unseen_person["answer"]["wrong_answers"],
+    ) == "Miriam"
+    assert _validate_synthesized_question(unseen_person, "ToMBench", difficulty="hard") == (
+        "option_introduces_entity_absent_from_story"
+    )
+
+
+def test_stage3_preserves_gate_cot_trace_when_subsequent_rewrite_fails_validation(monkeypatch):
+    from types import SimpleNamespace
+    import feedback.stage3_synthesis as stage3
+
+    story_valid = (
+        "Sylvia checked the Monday rota for Denver while Damon carried the field-course keys to Tessa."
+    )
+    story_bad_draft = (
+        "Sylvia checked the Monday rota for Denver while Damon carried the field-course keys to Tessa."
+    )
+    prompts_seen = []
+
+    class FakeClient:
+        def batch_generate_structure(self, prompts, schema, mode="auto", desc=""):
+            prompts_seen.extend(prompts)
+            round_n = len(prompts_seen)
+            if round_n == 1:
+                q = ToMBenchQuestionFlat(
+                    reasoning_trap_plan="round 1 plan",
+                    target_moment=story_valid,
+                    story=story_valid,
+                    question=(
+                        "What does Sylvia say? "
+                        "A. Both lab and Denver "
+                        "B. Only lab "
+                        "C. Only Denver "
+                        "D. Only field"
+                    ),
+                    correct_letter="A",
+                    meta_ability="social_inference",
+                    meta_id="s1",
+                )
+            elif round_n == 2:
+                q = ToMBenchQuestionFlat(
+                    reasoning_trap_plan="round 2 plan",
+                    target_moment=story_bad_draft,
+                    story=story_bad_draft,
+                    question=(
+                        "What does Sylvia say? "
+                        "A. Ask Miriam about Denver "
+                        "B. Only lab "
+                        "C. Only Denver "
+                        "D. Only field"
+                    ),
+                    correct_letter="A",
+                    meta_ability="social_inference",
+                    meta_id="s1",
+                )
+            else:
+                q = ToMBenchQuestionFlat(
+                    reasoning_trap_plan="round 3 plan",
+                    target_moment=story_valid,
+                    story=story_valid,
+                    question=(
+                        "What does Sylvia say? "
+                        "A. Mention both the lab rota and Denver "
+                        "B. Mention only the lab rota on Monday "
+                        "C. Mention only the Tessa keys on Monday "
+                        "D. Mention only the Damon notes on Monday"
+                    ),
+                    correct_letter="A",
+                    meta_ability="social_inference",
+                    meta_id="s1",
+                )
+            return [SimpleNamespace(content=SimpleNamespace(questions=[q])) for _ in prompts]
+
+    class GateRound1EasyThenAccept:
+        model_name = "checkpoint-93"
+        k = 4
+
+        def __init__(self):
+            self.calls = 0
+
+        def evaluate(self, rows, dataset_name):
+            self.calls += 1
+            if self.calls == 1:
+                return {
+                    r["meta"]["id"]: {
+                        "correct": 4,
+                        "total": 4,
+                        "solve_rate": 1.0,
+                        "selected_option_counts": {"Both lab and Denver": 4},
+                        "solver_trace": {
+                            "trace_mode": "anchor",
+                            "is_correct": True,
+                            "selected_letters": ["A"],
+                            "selected_option_text": "Both lab and Denver",
+                            "option_map": {"A": "Both lab and Denver", "B": "Only lab", "C": "Only Denver", "D": "Only field"},
+                            "reasoning_tail": "...[earlier reasoning omitted]...\nROUND1_SHORTCUT_TRACE: pick A.",
+                            "content": r"\boxed{A}",
+                        },
+                    }
+                    for r in rows
+                }
+            return {r["meta"]["id"]: {"correct": 2, "total": 4, "solve_rate": 0.5} for r in rows}
+
+        def passes(self, stats):
+            return stats["solve_rate"] <= 0.75
+
+    monkeypatch.setattr(stage3.runner, "create_llm_client", lambda cfg: FakeClient())
+    rows, stats = stage3.synthesize_from_reports(
+        [{"dimension": "Desire: Desires influence on actions", "primary_cognitive_operation": "social_inference", "_meta": {"lang": "en"}}],
+        "ToMBench",
+        {"model_name": "claude-opus-5-5"},
+        samples_per_report=1,
+        max_retries=3,
+        target_difficulty="hard",
+        difficulty_gate=GateRound1EasyThenAccept(),
+    )
+
+    assert stats["succeeded"] == 1 and len(rows) == 1
+    assert len(prompts_seen) == 3
+    # Round 3 prompt must retain Round 1's CoT trace AND report Round 2's validation failure + Miriam + draft
+    assert "Previous Attempt Was Too Easy" in prompts_seen[2]
+    assert "ROUND1_SHORTCUT_TRACE: pick A." in prompts_seen[2]
+    assert "Additional Structural Validation Failure on Intermediate Rewrite" in prompts_seen[2]
+    assert "Miriam" in prompts_seen[2]
+    assert "Ask Miriam about Denver" in prompts_seen[2]
+    assert prompts_seen[2] != prompts_seen[1]
+
+
+def test_stage3_rotates_variant_topology_and_injects_sibling_anti_isomorphism(monkeypatch):
+    from types import SimpleNamespace
+    from feedback.prompts import _VARIANT_TOPOLOGY_DIRECTIVES
+    import feedback.stage3_synthesis as stage3
+
+    report = {
+        "dimension": "Knowledge: Information-knowledge links__zh",
+        "primary_cognitive_operation": "information_access",
+        "_meta": {"lang": "zh"},
+    }
+    p0 = build_stage2_generation_from_report_prompt(report, "ToMBench", variant_index=0, target_difficulty="hard", lang="zh")
+    p1 = build_stage2_generation_from_report_prompt(report, "ToMBench", variant_index=1, target_difficulty="hard", lang="zh")
+    p2 = build_stage2_generation_from_report_prompt(report, "ToMBench", variant_index=2, target_difficulty="hard", lang="zh")
+    assert _VARIANT_TOPOLOGY_DIRECTIVES[0] in p0 and _VARIANT_TOPOLOGY_DIRECTIVES[1] not in p0
+    assert _VARIANT_TOPOLOGY_DIRECTIVES[1] in p1 and _VARIANT_TOPOLOGY_DIRECTIVES[2] not in p1
+    assert _VARIANT_TOPOLOGY_DIRECTIVES[2] in p2 and _VARIANT_TOPOLOGY_DIRECTIVES[0] not in p2
+
+    # Verify new cot-retry-01 anti-shortcut rules are present in the corresponding prompts
+    assert "at least 4 units away from the midpoint" in p0
+    assert "4-stage 'glass wall/door" in p0
+    p_soc = build_stage2_generation_from_report_prompt(
+        {"dimension": "d", "primary_cognitive_operation": "social_inference", "_meta": {"lang": "en"}},
+        "ToMBench",
+        target_difficulty="hard",
+    )
+    assert "at least TWO (ideally three) options match BOTH halves" in p_soc
+    p_emo = build_stage2_generation_from_report_prompt(
+        {"dimension": "d", "primary_cognitive_operation": "emotion_attribution", "_meta": {"lang": "en"}},
+        "ToMBench",
+        target_difficulty="hard",
+    )
+    assert "NEVER let 3 of 4 causal clauses be objectively false" in p_emo
+
+    prompts_seen = []
+
+    class FakeClient:
+        def batch_generate_structure(self, prompts, schema, mode="auto", desc=""):
+            prompts_seen.extend(prompts)
+            idx = len(prompts_seen)
+            story = f"周日早班清点后，陆安核对了第{idx}号货架的标签。"
+            q = ToMBenchQuestionFlat(
+                reasoning_trap_plan=f"UNIQUE_TRAP_PLAN_{idx}",
+                target_moment=story,
+                story=story,
+                question=f"第{idx}题：陆安认为货架上有多少箱？ A. 十箱以内 B. 二十箱左右 C. 三十箱以上 D. 五十箱以上",
+                correct_letter="A",
+                meta_ability="information_access",
+                meta_id=f"s{idx}",
+            )
+            return [SimpleNamespace(content=SimpleNamespace(questions=[q])) for _ in prompts]
+
+    monkeypatch.setattr(stage3.runner, "create_llm_client", lambda cfg: FakeClient())
+    rows, stats = stage3.synthesize_from_reports(
+        [report],
+        "ToMBench",
+        {"model_name": "claude-opus-5-5"},
+        samples_per_report=2,
+        max_retries=1,
+        target_difficulty="hard",
+    )
+    assert stats["succeeded"] == 2 and len(rows) == 2
+    assert len(prompts_seen) == 2
+    assert "Sibling Variants Already Generated for This Report" not in prompts_seen[0]
+    assert "Sibling Variants Already Generated for This Report" in prompts_seen[1]
+    assert "UNIQUE_TRAP_PLAN_1" in prompts_seen[1]
+    assert all("_reasoning_trap_plan" not in r for r in rows)

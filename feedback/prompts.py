@@ -551,9 +551,16 @@ _DISTRACTOR_STRATEGY_BY_OPERATION: Dict[str, str] = {
         "Primary trap: combine genuine partial cues (an overheard fragment, a routine reset, or an unattributed object) "
         "with ground-truth reality so a model confuses partial exposure with full knowledge. "
         "Secondary trap: what an informed insider would know. "
-        "For numeric/proportion estimates: NEVER add a redundant capacity/midpoint confirmation in the story alongside a vague quantifier "
-        "(e.g., do NOT write 'nearly half' AND then explain 'so one 20-portion pot is enough'), and keep ALL 4 options as bare comparable numbers/estimates "
-        "with NO trailing fraction glosses (never write ', 略少于一半' / ', 恰好是一半' / ', just under half')."
+        "For numeric/proportion estimates: (a) state the total-count scope unambiguously across rooms/categories "
+        "(e.g. specify whether 'total 40 boxes' covers all categories across both front hall and back storeroom), "
+        "(b) NEVER add a redundant capacity/midpoint confirmation in the story alongside a vague quantifier "
+        "(do NOT write 'nearly half' AND then explain 'so one 20-portion pot is enough'), "
+        "(c) leave a clear structural margin (>= 4 units away from the midpoint) so qualitative comparisons ('more than' vs 'equal to') "
+        "NEVER hinge on a +/-1 unit edge inside 'nearly half' / '几乎占一半', and keep ALL 4 options as bare comparable numbers/estimates "
+        "with NO trailing fraction glosses (never write ', 略少于一半' / ', 恰好是一半' / ', just under half'). "
+        "For attention/novelty items: NEVER reuse the 4-stage 'glass wall/door (visible) vs. kneeling under desk/cupboard or solid kitchen wall (occluded)' template, "
+        "NEVER narrate 'watched X unwrap Y' directly, ensure the person addressed ('X, pass me that one') is physically beside the requested item, "
+        "and NEVER place a seen distractor inside an opaque bag while leaving the unseen target uncovered in plain sight when asking 'What is that?'"
     ),
     "recursive_belief": (
         "Primary trap: answer one level shallower than asked OR rely on partial secondhand evidence that Agent A "
@@ -563,13 +570,16 @@ _DISTRACTOR_STRATEGY_BY_OPERATION: Dict[str, str] = {
         "Primary trap: pair a strong emotional trigger with a competing social/role duty so the model must weigh "
         "regulation vs outward display; distractors use same-valence emotion from the wrong trigger or unrestrained impulsive action. "
         "If the question asks both 'what emotion and why', NEVER start all 4 options with the same emotion prefix (e.g., all 4 starting with '心里发沉，因为...'); "
-        "use a 2x2 orthogonal design (2 distinct plausible emotions x 2 distinct causal attributions)."
+        "use a 2x2 orthogonal design (2 distinct plausible emotions x 2 distinct causal attributions). "
+        "When options carry 'because ...' causal clauses, NEVER let 3 of 4 causal clauses be objectively false in the world state so a solver can eliminate them by fact-checking alone; "
+        "and NEVER give the target agent an explicit overheard confession (e.g. 'I rewrote one of hers last night') that stays unaccounted for unless the target attributes the criticized item to that rewrite."
     ),
     "social_inference": (
         "Primary trap: set a conflict between literal courtesy/duty and an underlying personal tension or unstated constraint; "
         "wrong answers include the face-value routine response and an exaggerated reaction ignoring role constraints. "
         "For persuasion/request dilemmas: NEVER ask an omniscient effectiveness question ('what will get Agent B to agree?') after Agent B states their exact private objection aloud to a third party; "
-        "instead lock the question onto the requester's partial/misled perspective ('based on what Agent A knows, what would Agent A expect to work?') OR keep Agent B's constraint implicit in earlier actions rather than spoken verbatim."
+        "instead lock the question onto the requester's partial/misled perspective ('based on what Agent A knows, what would Agent A expect to work?') OR keep Agent B's constraint implicit in earlier actions rather than spoken verbatim. "
+        "Ensure at least TWO (ideally three) options match BOTH halves of any stated two-part persuasion framing, differing only in which target desire remains live via an implicit routine/handover cue rather than an explicit weekday calendar contrast (e.g. Tuesday vs. Wednesday)."
     ),
     "temporal_reference": (
         "Primary trap: answer 'what to do before/after the WRONG sub-event' — "
@@ -578,11 +588,15 @@ _DISTRACTOR_STRATEGY_BY_OPERATION: Dict[str, str] = {
     ),
     "pragmatic_inference": (
         "Primary trap: the LITERAL / face-value interpretation OR an over-read hint without stopping at the exact utterance; "
-        "never narrate the speaker's follow-up execution after the utterance."
+        "never narrate the speaker's follow-up execution after the utterance. "
+        "NEVER use an early explicit self-disqualification line ('I only like the almond ones', 'Swimming, sorry', or handing away one's own tool right before asking) that kills the self-interest distractor in one sentence; "
+        "exclude competing self-interest via implicit timing, resource, or role constraints instead, and keep any gap between a partial message preview and the queried utterance tight (1-2 minutes while hands are busy) so reading the rest later is ruled out."
     ),
     "causal_reasoning": (
         "Primary trap: indirect causal chain break — surface symptoms match an obvious local cause, while the true upstream "
-        "cause lies in an earlier dependency; distractors include both the surface symptom fix and reversed cause-effect."
+        "cause lies in an earlier dependency; distractors include both the surface symptom fix and reversed cause-effect. "
+        "NEVER reduce involuntary-error/misstatement items to a 0-hop physical-location lookup where the story explicitly shows the item abandoned on a seat/shelf (or adds a camera-closeup spoiler like 'screen on the bleachers turned off') while 3 distractors contradict the literal text; "
+        "keep at least two causal explanations consistent with surface actions so the solver must reconcile epistemic access and belief update order."
     ),
     "referent_resolution": (
         "Primary trap: use a different syntactically and contextually plausible referent supported by an earlier recency cue."
@@ -821,13 +835,20 @@ _NAME_POOL_HINTS: Dict[str, List[str]] = {
     ],
 }
 
+_VARIANT_TOPOLOGY_DIRECTIVES: List[str] = [
+    "truncated or partially rolled-back written artifact + implicit institutional/household rule (target sees only a lock-screen prefix or pre-revision board, while an unstated role/handover convention flips which option is live)",
+    "two-step container/label/sub-assembly swap + partial verification (two items, proofs, or sub-parts are separated or swapped and one subset is checked, without using a 4-stage glass-wall vs. under-desk/solid-wall physical occlusion table)",
+    "second-order perspective / addressee-specific speech act (hinges on what Agent A believes Agent B knows, expects, or can act on, or why an indirect utterance is tailored to the listener's constraint)",
+]
+
 _ANTI_TEMPLATE_RULES = (
     "- Decisive evidence channel for THIS variant: {channel}. Build the story around this channel.\n"
+    "- Assigned reasoning topology for THIS variant (variant slot #{variant_slot}): {topology_directive}. Do NOT reuse the same story skeleton, numeric total (e.g. '40 boxes, nearly half'), or occlusion trick across sibling variants.\n"
     "- Suggested fresh character names for THIS variant: {name_hint} (vary roles/occupations; avoid Owen/Fiona/Theo/Priya/Declan/Felix/Hannah/Claire/Trevor/Nolan/林晓/林晓雯/周敏)\n"
     "- Do NOT use the 'catches eye / glances toward X / smiles / asks a literal question' template, and do not make a gaze or smile the key cue\n"
     "- Do NOT add a whimsical decoy object (goofy, comical, or funny decoration, sticker, painting, umbrella) to support an 'amusement' distractor\n"
     "- Do NOT make the correct answer the only option that ties together every planted detail; at least one distractor must also be consistent with most of the story and fail on exactly one fact\n"
-    "- Physical & quantitative determinacy: if the story includes a physical obstacle (e.g. heavy load, broken tool, towed vehicle), the correct option must resolve it rather than leaving it broken; if using approximate quantifiers ('nearly half', 'almost none', '将近一半', '几乎没有'), never separate numeric options by ±1 or ±2 inside the vague interval unless a post-update recount uniquely closes the exact number, never add a redundant midpoint gloss in the story (like 'so one 20-portion pot is enough'), and give bare numeric estimates without fraction glosses in options; for persuasion scenarios, keep the target's constraint implicit or ask from the requester's partial perspective rather than omnisciently matching spoken objections"
+    "- Physical & quantitative determinacy: if the story includes a physical obstacle (e.g. heavy load, broken tool, towed vehicle), the correct option must resolve it rather than leaving it broken; if using approximate quantifiers ('nearly half', 'almost none', '将近一半', '几乎没有'), state total-count scope explicitly across rooms/categories, keep qualitative comparisons at least 4 units away from the midpoint so they never hinge on +/-1 rounding, never separate numeric options by ±1 or ±2 inside the vague interval unless a post-update recount uniquely closes the exact number, never add a redundant midpoint gloss in the story (like 'so one 20-portion pot is enough'), and give bare numeric estimates without fraction glosses in options; for persuasion scenarios, keep the target's constraint implicit or ask from the requester's partial perspective rather than omnisciently matching spoken objections"
 )
 
 _GROUNDED_DISTRACTOR_RULES = (
@@ -991,6 +1012,28 @@ def _format_solver_trace_section(previous_question: Dict[str, Any], primary_op: 
     return "\n".join(lines) + "\n"
 
 
+def _format_sibling_variants_section(sibling_questions: Optional[List[Dict[str, Any]]]) -> str:
+    """Summarize already accepted sibling variants so the next variant uses a distinct structure."""
+    if not sibling_questions:
+        return ""
+    lines = [
+        "### Sibling Variants Already Generated for This Report (MUST Differentiate Structure)",
+        "Use a DIFFERENT narrative setup, numeric scale/setting, access boundary mechanism, and question framing from the sibling variant(s) below:",
+    ]
+    for idx, sib in enumerate(sibling_questions, 1):
+        if not isinstance(sib, dict):
+            continue
+        q_text = str(sib.get("question") or "").strip()
+        plan_text = str(sib.get("_reasoning_trap_plan") or "").strip()
+        story_text = str(sib.get("story") or "").strip()
+        lines.append(f"- **Sibling #{idx} Question**: {q_text[:180]}")
+        if plan_text:
+            lines.append(f"  - Sibling Trap Plan: {plan_text[:240]}")
+        elif story_text:
+            lines.append(f"  - Sibling Story Opening: {story_text[:180]}")
+    return "\n".join(lines) + "\n\n" if len(lines) > 2 else ""
+
+
 def build_stage2_generation_from_report_prompt(
     report: Dict[str, Any],
     dataset_name: str,
@@ -1001,6 +1044,7 @@ def build_stage2_generation_from_report_prompt(
     target_difficulty: str = "",
     difficulty_weights: Optional[Dict[str, float]] = None,
     schedule_index: Optional[int] = None,
+    sibling_questions: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     """构建从维度诊断报告合成新样本的 prompt
 
@@ -1064,10 +1108,14 @@ def build_stage2_generation_from_report_prompt(
         channel = _EVIDENCE_CHANNELS[channel_idx % len(_EVIDENCE_CHANNELS)]
         name_pool = _NAME_POOL_HINTS.get(lang, _NAME_POOL_HINTS["en"])
         name_hint = name_pool[channel_idx % len(name_pool)]
+        variant_slot = variant_index % len(_VARIANT_TOPOLOGY_DIRECTIVES)
+        topology_directive = _VARIANT_TOPOLOGY_DIRECTIVES[variant_slot]
         difficulty_specific_rules = difficulty_specific_rules.format(
             anti_template_rules=_ANTI_TEMPLATE_RULES.format(
                 channel=channel,
                 name_hint=name_hint,
+                variant_slot=variant_slot,
+                topology_directive=topology_directive,
             ),
             grounded_distractor_rules=_GROUNDED_DISTRACTOR_RULES,
         )
@@ -1080,34 +1128,23 @@ def build_stage2_generation_from_report_prompt(
     )
 
     if previous_question is not None:
-        failure_reason = previous_question.get("_failure_reason") if isinstance(previous_question, dict) else None
+        is_prev_dict = isinstance(previous_question, dict)
+        failure_reason = previous_question.get("_failure_reason") if is_prev_dict else None
+        failure_detail = previous_question.get("_failure_detail") if is_prev_dict else None
+        failed_draft = previous_question.get("_failed_draft") if is_prev_dict else None
+        gate_reason = previous_question.get("gate_reason") if is_prev_dict else None
         prev_for_dump = (
             {
                 k: v
                 for k, v in previous_question.items()
-                if k not in ("solver_trace", "selected_option_counts")
+                if k not in ("solver_trace", "selected_option_counts", "_failure_reason", "_failure_detail", "_failed_draft")
             }
-            if isinstance(previous_question, dict)
+            if is_prev_dict
             else previous_question
         )
         prev_str = json.dumps(prev_for_dump, indent=2, ensure_ascii=False)
         trace_section = _format_solver_trace_section(previous_question, primary_op)
-        if failure_reason:
-            retry_feedback = (
-                "## RETRY — Previous Attempt Failed Structured Validation\n"
-                f"The previous generation failed because: {str(failure_reason).replace('_', ' ')}.\n"
-                "Return a complete object matching the schema exactly. Do not omit required fields.\n\n"
-                f"Previous attempt metadata: {prev_str}\n\n"
-            )
-        elif isinstance(previous_question, dict) and previous_question.get("gate_reason") == "missing_eval_stats":
-            retry_feedback = (
-                "## RETRY — Previous Attempt Could Not Be Scored\n"
-                "The solver did not return a complete set of usable answers, so there is no "
-                "difficulty result for this attempt. Generate another question for the same "
-                "diagnosis and requested difficulty without inferring that the previous draft "
-                "was too easy or too hard.\n\n"
-            )
-        elif isinstance(previous_question, dict) and previous_question.get("gate_reason") == "too_hard_or_unanswerable":
+        if gate_reason == "too_hard_or_unanswerable":
             solver_result = previous_question.get("solver_result") or "0 times"
             retry_feedback = (
                 "## ⚠ RETRY — Previous Attempt Was Unanswerable / Broken (0% Solve Rate)\n"
@@ -1120,11 +1157,12 @@ def build_stage2_generation_from_report_prompt(
                 "### How to fix answerability while keeping genuine ToM difficulty\n"
                 "- Ensure every premise needed for the correct option is explicitly observable or inferable before target_moment\n"
                 "- Ensure NO distractor remains factually true or practically superior under the story constraints\n"
-                "- If using approximate quantifiers ('nearly half', 'almost none', '将近一半', '几乎没有'), ensure options are separated beyond rounding ambiguity or closed by a second-perspective count\n"
+                "- If using approximate quantifiers ('nearly half', 'almost none', '将近一半', '几乎没有'), state total-count scope explicitly and keep qualitative comparisons at least 4 units away from the midpoint (never separated by +/-1 rounding)\n"
+                "- Do NOT leave an overheard confession (e.g. 'I rewrote one of hers last night') unaccounted for if the target agent is supposed to believe the criticized work is her own\n"
                 "- Avoid genuine cultural/moral ties; anchor the target emotion/norm in explicit prior commitments\n\n"
             )
-        else:
-            solver_result = previous_question.get("solver_result") if isinstance(previous_question, dict) else None
+        elif gate_reason == "too_easy" or (gate_reason is None and not failure_reason):
+            solver_result = previous_question.get("solver_result") if is_prev_dict else None
             retry_feedback = (
                 "## ⚠ RETRY — Previous Attempt Was Too Easy\n"
                 "The question below was generated for this same error pattern but rejected because "
@@ -1137,13 +1175,55 @@ def build_stage2_generation_from_report_prompt(
                 "### Mandatory Structural Escalation Rules (NOT mere surface re-skinning)\n"
                 "- **No Structural Isomorphism**: Keep or change the setting as needed, but ADD a new reasoning hop — e.g., escalate a 1st-order unobserved swap into a 2nd-order belief-about-belief question ('What does A think B expects/intends...'), OR replace a single update with two sequential updates where an intermediate partial rollback/re-labeling creates a competing stale belief.\n"
                 "- **Counter-Directional Partial Cue**: Make the target agent's partial observation (overheard fragment, text, label, or visible trace) point toward a WRONG option so naive CoT trusts it, while ONLY reconciling earlier timing/access boundaries proves the correct option. NEVER let the partial cue reinforce the correct answer.\n"
-                "- **No Distractor-Killing Patches**: NEVER insert convenience sentences in the story that render a strong distractor physically/factually impossible (e.g., do NOT write that an inspector left/cancelled the check, that a rival drove away, or that prior users confirmed daily use). Keep every distractor physically live so it fails ONLY on epistemic access or timing.\n"
-                "- **No Front-Loaded Explanatory Parables**: Do NOT open with a prior-event story that explicitly explains the ending's causal trick; plant clues as incidental operational facts inside the current scene.\n"
+                "- **No Distractor-Killing Patches**: NEVER insert convenience sentences in the story that render a strong distractor physically/factually impossible (e.g., do NOT write that an inspector left/cancelled the check, that a rival drove away, or that prior users confirmed daily use) and NEVER add early explicit self-disqualifications ('I only like X', 'Swimming, sorry', or giving away one's own tool before asking). Keep every distractor physically live so it fails ONLY on epistemic access or timing.\n"
+                "- **No Front-Loaded Explanatory Parables & No 0-Hop Spoilers**: Do NOT open with a prior-event story that explicitly explains the ending's causal trick, and NEVER add camera-closeup spoilers on abandoned objects; plant clues as incidental operational facts inside the current scene.\n"
+                "- **Rule Conflict Resolution**: If a surface phrasing or template constraint in the Dimension-Level Error Pattern report above forces a 1-option template match (e.g. only 1 option matching a two-part message) or a 0-hop physical-location lookup (e.g. asking only why a statement disagrees with objective position when the object's location is literally narrated), OVERRIDE that surface constraint: make at least two options match the two-part framing (differing only on implicit desire/routine cues, not explicit Tuesday vs. Wednesday calendars), ensure distractor 'because' clauses are not objectively false in the world state, and ask at the epistemic belief/handover level while still testing "
+                f"`{primary_op}`.\n"
                 "- **Explicit Retry Delta in `reasoning_trap_plan`**: Inside `reasoning_trap_plan`, first state (1) the exact leak/shortcut that made the rejected draft too easy, (2) the new topological hop or counter-directional cue added here, and (3) why the strongest distractor stays physically live without a distractor-killing patch. Make at least one wrong answer match what a model outputs if it skips "
                 f"{primary_op} and stays consistent with all but one decisive fact.\n\n"
             )
+        elif gate_reason == "missing_eval_stats" and not failure_reason:
+            retry_feedback = (
+                "## RETRY — Previous Attempt Could Not Be Scored\n"
+                "The solver did not return a complete set of usable answers, so there is no "
+                "difficulty result for this attempt. Generate another question for the same "
+                "diagnosis and requested difficulty without inferring that the previous draft "
+                "was too easy or too hard.\n\n"
+            )
+        else:
+            detail_line = (
+                f"Offending detail: `{failure_detail}` (introduce it explicitly in the story or remove/rephrase it in options).\n"
+                if failure_detail
+                else ""
+            )
+            retry_feedback = (
+                "## RETRY — Previous Attempt Failed Structured Validation\n"
+                f"The previous generation failed because: {str(failure_reason).replace('_', ' ')}.\n"
+                f"{detail_line}"
+                "Return a complete object matching the schema exactly. Do not omit required fields.\n\n"
+                f"Previous attempt metadata: {prev_str}\n\n"
+            )
+
+        if failure_reason and gate_reason in ("too_easy", "too_hard_or_unanswerable"):
+            validation_note = (
+                "### ⚠ Additional Structural Validation Failure on Intermediate Rewrite\n"
+                f"Your previous rewrite attempt was rejected by structural validation for: `{str(failure_reason).replace('_', ' ')}`.\n"
+            )
+            if failure_detail:
+                validation_note += (
+                    f"- **Offending Token / Detail**: `{failure_detail}` "
+                    "(introduce it explicitly in the story or remove/rephrase it in options).\n"
+                )
+            if isinstance(failed_draft, dict) and failed_draft:
+                validation_note += (
+                    "- **Rejected Intermediate Draft** (fix the validation error while keeping the difficulty escalation above):\n"
+                    f"```json\n{json.dumps(failed_draft, indent=2, ensure_ascii=False)}\n```\n"
+                )
+            retry_feedback += validation_note + "\n"
     else:
         retry_feedback = ""
+
+    retry_feedback += _format_sibling_variants_section(sibling_questions)
 
     common_patterns = _sanitize_report_items(report.get("common_error_patterns", []))
     failure_trigger = _sanitize_report_items(report.get("failure_trigger", []))

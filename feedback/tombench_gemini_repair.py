@@ -44,8 +44,10 @@ def build_repair_prompt(row: Dict[str, Any], stats: Dict[str, Any], last_error: 
         mode_guidance = (
             "Mode: ANSWERABILITY FIX (solver solved 0/8 or 1/8 — likely missing premise, physical contradiction, or factually true distractor).\n"
             "- Keep the core ToM dilemma, but make the decisive clue observable/inferable BEFORE target_moment.\n"
-            "- Resolve any physical obstacle (e.g. if transport/tools are missing, ensure the correct answer addresses it).\n"
-            "- Verify EVERY wrong option is unambiguously false under the story (no factually true distractors and no ±1/±2 overlapping vague estimates)."
+            "- Resolve any physical obstacle (e.g. if transport/tools are missing, ensure the correct answer addresses it), and align the addressee spatially with the requested object.\n"
+            "- If using approximate quantifiers ('nearly half', 'almost none', '将近一半', '几乎没有'), state total-count scope explicitly across rooms/categories and keep comparisons >= 4 units from the midpoint (no ±1/±2 overlapping vague estimates).\n"
+            "- Do NOT leave an overheard confession unaccounted for when testing verified vs. tampered work, and keep any gap between a partial message preview and speech tight (1-2 minutes).\n"
+            "- Verify EVERY wrong option is unambiguously false under the story (no factually true distractors)."
         )
     else:
         mode_guidance = (
@@ -53,8 +55,11 @@ def build_repair_prompt(row: Dict[str, Any], stats: Dict[str, Any], last_error: 
             "- Do NOT do a 1-to-1 structural re-skinning; rewrite the scenario and question (do NOT copy the old easy question verbatim) "
             "by adding a new reasoning hop (e.g., 2nd-order belief or two sequential updates with a partial rollback), a counter-directional partial cue "
             "that tempts a wrong option (NEVER let the partial cue reinforce the correct answer), and at least one neutral intervening beat before target_moment.\n"
-            "- No Distractor-Killing Patches & No Front-Loaded Parables: NEVER insert convenience facts that make a strong distractor physically impossible "
-            "and NEVER open with an explanatory prior-event parable; keep distractors physically live and failing only on epistemic access or timing.\n"
+            "- No Distractor-Killing Patches & No Front-Loaded Parables: NEVER insert convenience facts that make a strong distractor physically impossible, "
+            "early explicit self-disqualification lines ('I only like X', 'Swimming, sorry'), camera-closeup spoilers on forgotten objects, "
+            "or explanatory prior-event parables; keep distractors physically live and failing only on epistemic access or timing.\n"
+            "- Avoid the 4-stage glass-wall vs. under-desk/solid-wall occlusion table, explicit calendar-day (Tuesday vs. Wednesday) tie-breakers, "
+            "and objectively false 'because' clauses in emotion distractors; ensure at least two options match any stated two-part persuasion framing.\n"
             "- Ensure the strongest wrong option reflects what a CoT solver picks if it skips the target mental-state update."
         )
     retry_note = f"\nPrevious validation rejection: {last_error}. Fix this error strictly.\n" if last_error else ""

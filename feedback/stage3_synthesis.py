@@ -148,6 +148,15 @@ _OPTION_NAME_STOPWORDS = {
     "Since", "After", "Before", "Only", "Both", "Neither", "Either", "Go", "Ask", "Take",
     "Head", "Walk", "Set", "Step", "Return", "Open", "Stay", "Wheel", "Plug", "Restart",
     "Inspect", "Shift", "Relieve", "Trade", "To", "Tell", "Keep", "Let", "Wait", "Leave",
+    # Weekdays (singular & plural) and months
+    "Monday", "Mondays", "Tuesday", "Tuesdays", "Wednesday", "Wednesdays",
+    "Thursday", "Thursdays", "Friday", "Fridays", "Saturday", "Saturdays", "Sunday", "Sundays",
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+    # Common non-person capitalized time, direction, and award/crossword terms
+    "Weekend", "Weekends", "Morning", "Mornings", "Afternoon", "Afternoons", "Evening", "Evenings",
+    "Spring", "Summer", "Autumn", "Winter", "North", "South", "East", "West",
+    "Best", "Show", "First", "Second", "Third", "Across", "Down",
 }
 
 
@@ -203,9 +212,8 @@ def _find_option_structural_leak(correct: List[str], wrong: List[str]) -> Option
     return None
 
 
-def _find_option_grounding_issue(story: str, correct: List[str], wrong: List[str]) -> Optional[str]:
-    """Reject options that introduce unseen named entities or break hedging symmetry."""
-    options = correct + wrong
+def _find_ungrounded_option_entity(story: str, options: List[str]) -> Optional[str]:
+    """Return the first mid-sentence capitalized token in options absent from story."""
     for opt in options:
         for m in _OPTION_NAME_RE.finditer(opt):
             name = m.group(0)
@@ -215,8 +223,24 @@ def _find_option_grounding_issue(story: str, correct: List[str], wrong: List[str
                 continue
             if name in _OPTION_NAME_STOPWORDS:
                 continue
-            if not re.search(rf"\b{re.escape(name)}\b", story):
-                return "option_introduces_entity_absent_from_story"
+            candidates = [name]
+            if len(name) > 4:
+                if name.endswith("ies"):
+                    candidates.append(name[:-3] + "y")
+                if name.endswith("es"):
+                    candidates.append(name[:-2])
+                if name.endswith("s"):
+                    candidates.append(name[:-1])
+            if not any(re.search(rf"\b{re.escape(cand)}\b", story, re.IGNORECASE) for cand in candidates):
+                return name
+    return None
+
+
+def _find_option_grounding_issue(story: str, correct: List[str], wrong: List[str]) -> Optional[str]:
+    """Reject options that introduce unseen named entities or break hedging symmetry."""
+    options = correct + wrong
+    if _find_ungrounded_option_entity(story, options) is not None:
+        return "option_introduces_entity_absent_from_story"
     hedged = [bool(_HEDGE_RE.search(opt)) for opt in options]
     if sum(hedged) == 1:
         return "single_hedged_option_match_certainty_style_across_options"
@@ -954,22 +978,6 @@ def synthesize_from_reports(
 
         logger.info(f"  Round {round_idx + 1}/{max_retries}: generating {len(pending_pairs)} questions...")
 
-        # 合成语言由 Stage 2 报告的 _meta.lang 决定（维度分组已按语言拆分）。
-        gen_prompts = [
-            build_stage2_generation_from_report_prompt(
-                report=reports[r_idx],
-                dataset_name=dataset_name,
-                target_count=1,
-                previous_question=last_failed.get((r_idx, s_idx)) if round_idx > 0 else None,
-                lang=str((reports[r_idx].get("_meta") or {}).get("lang") or "en"),
-                variant_index=s_idx,
-                target_difficulty=target_difficulty,
-                difficulty_weights=difficulty_weights,
-                schedule_index=r_idx * samples_per_report + s_idx,
-            ) + f"\n\nThis is variant {s_idx + 1} for the same diagnosis. Use a distinct scenario, names, and surface structure from the other variants."
-            for (r_idx, s_idx) in pending_pairs
-        ]
-
         success_this_round = 0
         round_llm_config = dict(synthesis_llm_config)
         retry_think = round_llm_config.pop("retry_enable_thinking", True)
@@ -981,9 +989,47 @@ def synthesize_from_reports(
         ):
             round_llm_config["enable_thinking"] = True
         client = runner.create_llm_client(round_llm_config)
-        for batch_start in range(0, len(gen_prompts), batch_size):
-            batch_prompts = gen_prompts[batch_start: batch_start + batch_size]
-            batch_pairs = pending_pairs[batch_start: batch_start + batch_size]
+
+        # Keep variant waves separate so completed variants populate `sibling_questions`
+        # before the next variant's prompts are constructed.
+        batches: List[List[Tuple[int, int]]] = []
+        cur_batch: List[Tuple[int, int]] = []
+        cur_s: Optional[int] = None
+        for pair in pending_pairs:
+            if cur_batch and (len(cur_batch) >= batch_size or pair[1] != cur_s):
+                batches.append(cur_batch)
+                cur_batch = []
+            cur_batch.append(pair)
+            cur_s = pair[1]
+        if cur_batch:
+            batches.append(cur_batch)
+
+        for batch_pairs in batches:
+            # 合成语言由 Stage 2 报告的 _meta.lang 决定（维度分组已按语言拆分）。
+            batch_prompts = []
+            for r_idx, s_idx in batch_pairs:
+                siblings = [
+                    results[(r_idx, prev_s)][0]
+                    for prev_s in range(samples_per_report)
+                    if prev_s != s_idx and (r_idx, prev_s) in results and results[(r_idx, prev_s)]
+                ]
+                prompt_kwargs: Dict[str, Any] = dict(
+                    report=reports[r_idx],
+                    dataset_name=dataset_name,
+                    target_count=1,
+                    previous_question=last_failed.get((r_idx, s_idx)) if round_idx > 0 else None,
+                    lang=str((reports[r_idx].get("_meta") or {}).get("lang") or "en"),
+                    variant_index=s_idx,
+                    target_difficulty=target_difficulty,
+                    difficulty_weights=difficulty_weights,
+                    schedule_index=r_idx * samples_per_report + s_idx,
+                )
+                if siblings:
+                    prompt_kwargs["sibling_questions"] = siblings
+                batch_prompts.append(
+                    build_stage2_generation_from_report_prompt(**prompt_kwargs)
+                    + f"\n\nThis is variant {s_idx + 1} for the same diagnosis. Use a distinct scenario, names, and surface structure from the other variants."
+                )
 
             # SoMBench 一个 batch 可能混不同 qtype（schema），按 schema 子分组各调一次，
             # 再按原顺序拼回，保持与 batch_pairs 对齐。其余数据集走单一 schema。
@@ -1069,15 +1115,42 @@ def synthesize_from_reports(
                     for q_dict in q_rows:
                         q_dict.pop("_target_moment", None)
                     if validation_error:
-                        failed_payload = {"_failure_reason": validation_error}
-                        if q_rows:
-                            failed_payload.update({
-                                "story": q_rows[0].get("story"),
-                                "question": q_rows[0].get("question"),
-                                "answer": q_rows[0].get("answer"),
-                            })
+                        failure_detail = None
+                        if validation_error == "option_introduces_entity_absent_from_story" and q_rows:
+                            ans = q_rows[0].get("answer") or {}
+                            failure_detail = _find_ungrounded_option_entity(
+                                str(q_rows[0].get("story") or ""),
+                                list(ans.get("correct_answers") or []) + list(ans.get("wrong_answers") or []),
+                            )
+                        prior_failed = last_failed.get(pair)
+                        if isinstance(prior_failed, dict) and prior_failed.get("gate_reason"):
+                            failed_payload = dict(prior_failed)
+                            failed_payload["_failure_reason"] = validation_error
+                            if failure_detail:
+                                failed_payload["_failure_detail"] = failure_detail
+                            else:
+                                failed_payload.pop("_failure_detail", None)
+                            if q_rows:
+                                failed_payload["_failed_draft"] = {
+                                    "story": q_rows[0].get("story"),
+                                    "question": q_rows[0].get("question"),
+                                    "answer": q_rows[0].get("answer"),
+                                }
+                        else:
+                            failed_payload = {"_failure_reason": validation_error}
+                            if failure_detail:
+                                failed_payload["_failure_detail"] = failure_detail
+                            if q_rows:
+                                failed_payload.update({
+                                    "story": q_rows[0].get("story"),
+                                    "question": q_rows[0].get("question"),
+                                    "answer": q_rows[0].get("answer"),
+                                })
                         last_failed[pair] = failed_payload
                         continue
+                    plan_text = str(getattr(q, "reasoning_trap_plan", "") or "").strip()
+                    if plan_text and q_rows:
+                        q_rows[0]["_reasoning_trap_plan"] = plan_text
                     if difficulty_gate is not None and pair_difficulty in gate_difficulties:
                         gate_candidates[pair] = q_rows
                         continue
@@ -1085,7 +1158,15 @@ def synthesize_from_reports(
                     batch_new.extend(q_rows)
                     success_this_round += 1
                 else:
-                    last_failed[pair] = {"_failure_reason": "structured_output_failed"}
+                    prior_failed = last_failed.get(pair)
+                    if isinstance(prior_failed, dict) and prior_failed.get("gate_reason"):
+                        failed_payload = dict(prior_failed)
+                        failed_payload["_failure_reason"] = "structured_output_failed"
+                        failed_payload.pop("_failure_detail", None)
+                        failed_payload.pop("_failed_draft", None)
+                        last_failed[pair] = failed_payload
+                    else:
+                        last_failed[pair] = {"_failure_reason": "structured_output_failed"}
 
             if gate_candidates:
                 gate_rows = [row for rows in gate_candidates.values() for row in rows]
@@ -1161,6 +1242,10 @@ def synthesize_from_reports(
         logger.info(f"  Round {round_idx + 1}: {success_this_round}/{len(pending_pairs)} generated")
         pending_pairs = [p for p in pending_pairs if p not in results]
 
+    for rows in results.values():
+        for row in rows:
+            row.pop("_reasoning_trap_plan", None)
+            row.pop("_target_moment", None)
     final_results = [row for rows in results.values() for row in rows]
     stats = {
         "total_reports": len(reports),
