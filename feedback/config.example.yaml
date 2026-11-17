@@ -31,6 +31,11 @@ leakage_guard:
 synthesis:
   max_retries_per_diagnosis: 3
   bad_cases_per_report: 1
+  # quality_review:
+  #   enabled: true
+  #   fail_open: false
+  #   max_traces: 4
+  #   difficulties: [hard]
 
 synthesis_datasets:
   - name: ToMBench

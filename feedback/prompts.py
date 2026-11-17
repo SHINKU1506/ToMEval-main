@@ -1012,6 +1012,32 @@ def _format_solver_trace_section(previous_question: Dict[str, Any], primary_op: 
     return "\n".join(lines) + "\n"
 
 
+def _format_quality_review_section(previous_question: Dict[str, Any]) -> str:
+    """Format content quality reviewer defects and revision guidance for retry prompts."""
+    if not isinstance(previous_question, dict):
+        return ""
+    review = previous_question.get("quality_review")
+    if not isinstance(review, dict) or not review:
+        return ""
+
+    lines = ["### Content Quality Review Findings on the Rejected Candidate"]
+    cats = [str(c).strip() for c in (review.get("defect_categories") or []) if str(c).strip()]
+    if cats:
+        lines.append(f"- **Defect Categories**: `{', '.join(cats)}`")
+    summary = str(review.get("summary") or "").strip()
+    if summary:
+        lines.append(f"- **Summary**: {summary}")
+    issues = [str(i).strip() for i in (review.get("issues") or []) if str(i).strip()]
+    if issues:
+        lines.append("- **Specific Defects Found**:")
+        for issue in issues:
+            lines.append(f"  - {issue}")
+    guidance = str(review.get("revision_guidance") or "").strip()
+    if guidance:
+        lines.append(f"- **Required Revision Guidance**: {guidance}")
+    return "\n".join(lines) + "\n\n"
+
+
 def _format_sibling_variants_section(sibling_questions: Optional[List[Dict[str, Any]]]) -> str:
     """Summarize already accepted sibling variants so the next variant uses a distinct structure."""
     if not sibling_questions:
@@ -1137,14 +1163,38 @@ def build_stage2_generation_from_report_prompt(
             {
                 k: v
                 for k, v in previous_question.items()
-                if k not in ("solver_trace", "selected_option_counts", "_failure_reason", "_failure_detail", "_failed_draft")
+                if k not in (
+                    "solver_trace",
+                    "selected_option_counts",
+                    "quality_review",
+                    "_failure_reason",
+                    "_failure_detail",
+                    "_failed_draft",
+                )
             }
             if is_prev_dict
             else previous_question
         )
         prev_str = json.dumps(prev_for_dump, indent=2, ensure_ascii=False)
         trace_section = _format_solver_trace_section(previous_question, primary_op)
-        if gate_reason == "too_hard_or_unanswerable":
+        review_section = _format_quality_review_section(previous_question)
+        if gate_reason == "quality_review_rejected":
+            solver_result = previous_question.get("solver_result") or "within target difficulty band"
+            retry_feedback = (
+                "## ⚠ RETRY — Previous Candidate Failed Content Quality Review\n"
+                f"The candidate below passed the difficulty gate ({solver_result}) but was REJECTED by the content quality reviewer. "
+                "Fix EVERY defect listed below while keeping the item genuinely challenging for a CoT solver.\n\n"
+                "### Previous Candidate (rejected by quality review)\n"
+                f"```json\n{prev_str}\n```\n\n"
+                f"{review_section}"
+                f"{trace_section}"
+                "### Mandatory Quality & Anti-Shortcut Fixes\n"
+                "- **Eliminate Competing Interpretations**: Close any pragmatic or spatial loophole (e.g. a sub-zone sign that still allows watching from outside, or an utterance equally plausible as self-interest) using hard, implicit operational constraints.\n"
+                "- **Override +/-1 Fuzzy Quantifier Edges**: NEVER pit 'almost none / nearly half / 几乎没有 / 将近一半' (>0) against '=0' across a +/-1 boundary even if the diagnosis report mentions it; keep numeric gaps >= 4 units away from the midpoint or close counts via an explicit post-update check, and close any intermediate sales/transfers so CoT cannot bypass stale-artifact reasoning.\n"
+                "- **Align De Re / De Dicto Perspective**: When labels or lids were swapped without an agent's knowledge, never phrase 'what X has in mind' options with omniscient descriptors ('currently capped with...') that make both physical and mental targets defensible.\n"
+                "- **Eliminate CoT Shortcuts & Old Templates**: Do NOT use front-loaded prior-event parables, 4-stage occlusion tables, or child generic-rule permission templates; verify the solver must traverse the intended reasoning hop rather than a surface phrasing shortcut, and differentiate from any accepted sibling variants.\n\n"
+            )
+        elif gate_reason == "too_hard_or_unanswerable":
             solver_result = previous_question.get("solver_result") or "0 times"
             retry_feedback = (
                 "## ⚠ RETRY — Previous Attempt Was Unanswerable / Broken (0% Solve Rate)\n"
@@ -1182,13 +1232,13 @@ def build_stage2_generation_from_report_prompt(
                 "- **Explicit Retry Delta in `reasoning_trap_plan`**: Inside `reasoning_trap_plan`, first state (1) the exact leak/shortcut that made the rejected draft too easy, (2) the new topological hop or counter-directional cue added here, and (3) why the strongest distractor stays physically live without a distractor-killing patch. Make at least one wrong answer match what a model outputs if it skips "
                 f"{primary_op} and stays consistent with all but one decisive fact.\n\n"
             )
-        elif gate_reason == "missing_eval_stats" and not failure_reason:
+        elif gate_reason in ("missing_eval_stats", "quality_review_error") and not failure_reason:
             retry_feedback = (
-                "## RETRY — Previous Attempt Could Not Be Scored\n"
-                "The solver did not return a complete set of usable answers, so there is no "
-                "difficulty result for this attempt. Generate another question for the same "
+                "## RETRY — Previous Attempt Could Not Be Scored or Reviewed\n"
+                "The gate/reviewer did not return a complete usable result, so there is no "
+                "valid verdict for this attempt. Generate another question for the same "
                 "diagnosis and requested difficulty without inferring that the previous draft "
-                "was too easy or too hard.\n\n"
+                "was too easy, too hard, or flawed.\n\n"
             )
         else:
             detail_line = (
@@ -1204,7 +1254,7 @@ def build_stage2_generation_from_report_prompt(
                 f"Previous attempt metadata: {prev_str}\n\n"
             )
 
-        if failure_reason and gate_reason in ("too_easy", "too_hard_or_unanswerable"):
+        if failure_reason and gate_reason in ("too_easy", "too_hard_or_unanswerable", "quality_review_rejected"):
             validation_note = (
                 "### ⚠ Additional Structural Validation Failure on Intermediate Rewrite\n"
                 f"Your previous rewrite attempt was rejected by structural validation for: `{str(failure_reason).replace('_', ' ')}`.\n"

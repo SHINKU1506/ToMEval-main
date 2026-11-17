@@ -1683,3 +1683,373 @@ def test_stage3_rotates_variant_topology_and_injects_sibling_anti_isomorphism(mo
     assert "Sibling Variants Already Generated for This Report" in prompts_seen[1]
     assert "UNIQUE_TRAP_PLAN_1" in prompts_seen[1]
     assert all("_reasoning_trap_plan" not in r for r in rows)
+
+
+def test_difficulty_gate_returns_all_rollout_traces(monkeypatch):
+    from types import SimpleNamespace
+    import feedback.difficulty_gate as dg
+
+    monkeypatch.setattr(dg.runner, "create_content_client", lambda cfg: SimpleNamespace())
+
+    def fake_predict(samples, dataset_name, client, k, protocol="cot"):
+        return [
+            {
+                "sample_id": samples[0]["sample_id"],
+                "prompt_type": "mcq_single",
+                "options": {"A": "Right", "B": "Wrong"},
+                "pred": {"reasoning": f"Rollout {i} reasoning.", "content": r"\boxed{A}" if i < 3 else r"\boxed{B}"},
+            }
+            for i in range(k)
+        ]
+
+    def fake_judge(records):
+        return [
+            {"is_correct": i < 3, "extracted": "A" if i < 3 else "B", "error_reason": None if i < 3 else "wrong_answer"}
+            for i in range(len(records))
+        ]
+
+    monkeypatch.setattr(dg, "predict_records", fake_predict)
+    monkeypatch.setattr(dg, "judge_repeat", fake_judge)
+
+    gate = dg.DifficultyGate({"model_name": "ckpt", "api_key": "k"}, k=4, min_solve_rate=0.25, max_solve_rate=0.75)
+    row = {
+        "story": "S.",
+        "question": "Q?",
+        "answer": {"correct_answers": ["Right"], "wrong_answers": ["Wrong", "W2", "W3"]},
+        "meta": {"id": "s_rollout", "lang": "en"},
+    }
+    stats = gate.evaluate([row], "ToMBench")["s_rollout"]
+    assert stats["correct"] == 3 and stats["total"] == 4
+    assert len(stats["rollout_traces"]) == 4
+    assert sum(1 for t in stats["rollout_traces"] if t["is_correct"]) == 3
+    assert sum(1 for t in stats["rollout_traces"] if not t["is_correct"]) == 1
+
+
+def test_quality_reviewer_prompt_normalization_and_fail_modes(monkeypatch):
+    from types import SimpleNamespace
+    import feedback.quality_reviewer as qr
+
+    seen_prompts = []
+
+    class FakeReviewerClient:
+        def __init__(self, responses):
+            self._responses = responses
+
+        def batch_generate_structure(self, prompts, schema, mode="auto", desc=""):
+            seen_prompts.extend(prompts)
+            return list(self._responses)
+
+    # Non-empty defect_categories forces reject even if raw decision says accept
+    inconsistent_accept = qr.QualityReviewDecision(
+        decision="accept",
+        defect_categories=["competing_interpretation"],
+        issues=["Sub-zone sign does not bar watching from outside."],
+        revision_guidance="Restrict staying in the studio altogether.",
+        summary="Competing literal invitation remains valid.",
+    )
+    monkeypatch.setattr(
+        qr.runner,
+        "create_llm_client",
+        lambda cfg: FakeReviewerClient([SimpleNamespace(content=inconsistent_accept)]),
+    )
+    reviewer = qr.QualityReviewer({"model_name": "reviewer-model", "api_key": "k"})
+    verdicts = reviewer.review_batch(
+        [
+            {
+                "row": {
+                    "story": "Studio pottery story.",
+                    "question": "What is Gu Qing's intention?",
+                    "answer": {"correct_answers": ["Hint to leave"], "wrong_answers": ["Invite to watch", "W2", "W3"]},
+                    "meta": {"lang": "zh", "difficulty": "hard"},
+                    "_reasoning_trap_plan": "PLAN_MARKER_256",
+                },
+                "report": {
+                    "dimension": "Intention: Intentions explanations__zh",
+                    "primary_cognitive_operation": "pragmatic_inference",
+                    "hard_constraints": ["Must rule out literal interpretation."],
+                },
+                "gate_stats": {
+                    "correct": 3,
+                    "total": 4,
+                    "solve_rate": 0.75,
+                    "rollout_traces": [
+                        {"is_correct": False, "selected_option_text": "Invite to watch", "reasoning_tail": "ROLLOUT_TAIL_WATCH"}
+                    ],
+                },
+                "sibling_questions": [{"question": "Sibling Q?", "_reasoning_trap_plan": "SIBLING_PLAN_0"}],
+            }
+        ],
+        "ToMBench",
+    )
+    assert verdicts[0]["decision"] == "reject"
+    assert verdicts[0]["defect_categories"] == ["competing_interpretation"]
+    assert "PLAN_MARKER_256" in seen_prompts[0]
+    assert "ROLLOUT_TAIL_WATCH" in seen_prompts[0]
+    assert "SIBLING_PLAN_0" in seen_prompts[0]
+
+    # Empty response respects fail_open=False vs fail_open=True
+    monkeypatch.setattr(qr.runner, "create_llm_client", lambda cfg: FakeReviewerClient([SimpleNamespace(content=None)]))
+    strict_reviewer = qr.QualityReviewer({"model_name": "r", "api_key": "k"}, fail_open=False)
+    lenient_reviewer = qr.QualityReviewer({"model_name": "r", "api_key": "k"}, fail_open=True)
+    sample = [{"row": {"story": "S", "question": "Q", "answer": {}, "meta": {}}, "report": {}}]
+    assert strict_reviewer.review_batch(sample, "ToMBench")[0]["decision"] == "error"
+    assert lenient_reviewer.review_batch(sample, "ToMBench")[0]["decision"] == "accept"
+
+
+def test_stage3_quality_reviewer_rejects_defective_candidate_and_preserves_critique_and_cot_on_retry(
+    monkeypatch, tmp_path
+):
+    from types import SimpleNamespace
+    import feedback.stage3_synthesis as stage3
+    from feedback.stage3_synthesis import ToMBenchQuestionFlat
+
+    prompts_seen = []
+    story_valid = "After closing the studio, Sylvia placed the spare clay jars inside the locked cabinet."
+    story_ungrounded = "After closing the studio, Sylvia asked Miriam about the spare clay jars."
+
+    class FakeClient:
+        def batch_generate_structure(self, prompts, schema, mode="auto", desc=""):
+            prompts_seen.extend(prompts)
+            attempt = len(prompts_seen)
+            if attempt == 1:
+                q = ToMBenchQuestionFlat(
+                    reasoning_trap_plan="round 1 plan",
+                    target_moment=story_valid,
+                    story=story_valid,
+                    question=(
+                        "What does Sylvia expect? "
+                        "A. Fewer than 34 jars remain "
+                        "B. Exactly 34 jars remain "
+                        "C. More than 34 jars remain "
+                        "D. Exactly 14 jars remain"
+                    ),
+                    correct_letter="A",
+                    meta_ability="pragmatic_inference",
+                    meta_id="s1",
+                )
+            elif attempt == 2:
+                # Intermediate rewrite introduces an ungrounded entity so structural validation rejects it
+                q = ToMBenchQuestionFlat(
+                    reasoning_trap_plan="round 2 plan",
+                    target_moment=story_ungrounded,
+                    story=story_ungrounded,
+                    question=(
+                        "What does Sylvia say? "
+                        "A. Ask Miriam about the cabinet "
+                        "B. Ask Damon about the cabinet "
+                        "C. Ask Tessa about the cabinet "
+                        "D. Ask Warren about the cabinet"
+                    ),
+                    correct_letter="A",
+                    meta_ability="pragmatic_inference",
+                    meta_id="s1",
+                )
+            else:
+                q = ToMBenchQuestionFlat(
+                    reasoning_trap_plan="round 3 fixed plan",
+                    target_moment=story_valid,
+                    story=story_valid,
+                    question=(
+                        "What does Sylvia do? "
+                        "A. Lock the studio doors before counting "
+                        "B. Leave the cabinet open for evening class "
+                        "C. Hand the studio key to the supplier "
+                        "D. Move the jars onto the front table"
+                    ),
+                    correct_letter="A",
+                    meta_ability="pragmatic_inference",
+                    meta_id="s1",
+                )
+            return [SimpleNamespace(content=SimpleNamespace(questions=[q])) for _ in prompts]
+
+    class FakeDifficultyGate:
+        model_name = "checkpoint-93"
+        k = 4
+
+        def evaluate(self, rows, dataset_name):
+            return {
+                r["meta"]["id"]: {
+                    "correct": 3,
+                    "total": 4,
+                    "solve_rate": 0.75,
+                    "selected_option_counts": {"Fewer than 34": 3, "Exactly 34": 1},
+                    "solver_trace": {
+                        "trace_mode": "anchor",
+                        "is_correct": True,
+                        "selected_letters": ["A"],
+                        "selected_option_text": "Fewer than 34 jars remain",
+                        "reasoning_tail": "SOLVER_BYPASS_TRACE_413: used unclosed morning sales.",
+                        "content": r"\boxed{A}",
+                    },
+                    "rollout_traces": [],
+                }
+                for r in rows
+            }
+
+        def passes(self, stats):
+            return 0.25 <= stats["solve_rate"] <= 0.75
+
+    class FakeQualityReviewer:
+        model_name = "opus-reviewer"
+
+        def __init__(self):
+            self.calls = 0
+
+        def review_batch(self, items, dataset_name):
+            self.calls += 1
+            if self.calls == 1:
+                return [
+                    {
+                        "decision": "reject",
+                        "defect_categories": ["quantifier_or_boundary_ambiguity", "cot_shortcut_bypass"],
+                        "issues": ["Uses +/-1 boundary on 'almost none' and solver bypassed stale whiteboard check."],
+                        "revision_guidance": "Use a >=4-unit margin and close intermediate sales.",
+                        "summary": "Rejected due to +/-1 quantifier edge and CoT shortcut.",
+                    }
+                    for _ in items
+                ]
+            return [
+                {
+                    "decision": "accept",
+                    "defect_categories": [],
+                    "issues": [],
+                    "revision_guidance": "",
+                    "summary": "Cleanly determinable with no shortcuts.",
+                }
+                for _ in items
+            ]
+
+    monkeypatch.setattr(stage3.runner, "create_llm_client", lambda cfg: FakeClient())
+    out_file = tmp_path / "candidates.jsonl"
+    gate_log = tmp_path / "gate.jsonl"
+    rows, stats = stage3.synthesize_from_reports(
+        [{"dimension": "Knowledge: Information-knowledge links__zh", "primary_cognitive_operation": "pragmatic_inference", "_meta": {"lang": "en"}}],
+        "ToMBench",
+        {"model_name": "claude-opus-5-5"},
+        samples_per_report=1,
+        max_retries=3,
+        output_file=out_file,
+        target_difficulty="hard",
+        difficulty_gate=FakeDifficultyGate(),
+        gate_log_file=gate_log,
+        quality_reviewer=FakeQualityReviewer(),
+    )
+
+    assert stats["succeeded"] == 1 and len(rows) == 1
+    assert stats["difficulty_gate_rejected"] == 0
+    assert stats["quality_review_rejected"] == 1
+    assert len(prompts_seen) == 3
+
+    # Round 2 retry receives reviewer critique + Round 1 solver CoT
+    assert "Failed Content Quality Review" in prompts_seen[1]
+    assert "quantifier_or_boundary_ambiguity" in prompts_seen[1]
+    assert "SOLVER_BYPASS_TRACE_413" in prompts_seen[1]
+
+    # Round 3 retry retains Round 1 critique + CoT AND Round 2 structural validation error
+    assert "Failed Content Quality Review" in prompts_seen[2]
+    assert "SOLVER_BYPASS_TRACE_413" in prompts_seen[2]
+    assert "Additional Structural Validation Failure on Intermediate Rewrite" in prompts_seen[2]
+    assert "Damon" in prompts_seen[2]
+
+    # gate_log records both the rejected review and the final accepted entry
+    gate_entries = [json.loads(line) for line in gate_log.read_text(encoding="utf-8").splitlines()]
+    assert len(gate_entries) == 2
+    assert gate_entries[0]["passed"] is False
+    assert gate_entries[0]["reason"] == "quality_review_rejected"
+    assert gate_entries[0]["quality_review"]["defect_categories"] == [
+        "quantifier_or_boundary_ambiguity",
+        "cot_shortcut_bypass",
+    ]
+    assert gate_entries[1]["passed"] is True
+    assert gate_entries[1]["quality_review"]["decision"] == "accept"
+    assert len(out_file.read_text(encoding="utf-8").splitlines()) == 1
+
+
+def test_stage3_quality_reviewer_without_difficulty_gate(monkeypatch):
+    from types import SimpleNamespace
+    import feedback.stage3_synthesis as stage3
+    from feedback.stage3_synthesis import ToMBenchQuestionFlat
+
+    calls = 0
+
+    class FakeClient:
+        def batch_generate_structure(self, prompts, schema, mode="auto", desc=""):
+            nonlocal calls
+            calls += 1
+            story = f"Before opening the shop, Nadia spoke to Jonah beside the blue tin on attempt {calls}."
+            q = ToMBenchQuestionFlat(
+                reasoning_trap_plan=f"plan {calls}",
+                target_moment=story,
+                story=story,
+                question=(
+                    "What does Nadia mean? "
+                    "A. She wants Jonah to wait outside "
+                    "B. She wants Jonah to stay for dinner "
+                    "C. She forgot to bring the shop keys "
+                    "D. She already packed the blue tin"
+                ),
+                correct_letter="A",
+                meta_ability="pragmatic_inference",
+                meta_id=f"s{calls}",
+            )
+            return [SimpleNamespace(content=SimpleNamespace(questions=[q])) for _ in prompts]
+
+    class RejectFirstReviewer:
+        model_name = "opus-reviewer"
+
+        def __init__(self):
+            self.round = 0
+
+        def review_batch(self, items, dataset_name):
+            self.round += 1
+            if self.round == 1:
+                return [{
+                    "decision": "reject",
+                    "defect_categories": ["competing_interpretation"],
+                    "issues": ["Door rule does not prevent staying outside."],
+                    "revision_guidance": "Close the loophole.",
+                    "summary": "Ambiguous.",
+                }]
+            return [{
+                "decision": "accept",
+                "defect_categories": [],
+                "issues": [],
+                "revision_guidance": "",
+                "summary": "OK.",
+            }]
+
+    monkeypatch.setattr(stage3.runner, "create_llm_client", lambda cfg: FakeClient())
+    rows, stats = stage3.synthesize_from_reports(
+        [{"dimension": "Intention: Intentions explanations", "primary_cognitive_operation": "pragmatic_inference", "_meta": {"lang": "en"}}],
+        "ToMBench",
+        {"model_name": "claude-opus-5-5"},
+        samples_per_report=1,
+        max_retries=2,
+        target_difficulty="hard",
+        difficulty_gate=None,
+        quality_reviewer=RejectFirstReviewer(),
+    )
+    assert stats["succeeded"] == 1
+    assert stats["quality_review_rejected"] == 1
+    assert "attempt 2" in rows[0]["story"]
+
+
+def test_build_quality_reviewer_from_config():
+    from feedback.quality_reviewer import build_quality_reviewer
+
+    assert build_quality_reviewer(None) is None
+    assert build_quality_reviewer({"enabled": False}) is None
+    reviewer = build_quality_reviewer({
+        "enabled": True,
+        "fail_open": True,
+        "max_traces": 2,
+        "llm": {
+            "model_name": "claude-opus-5-5",
+            "api_url": "https://example.test/v1",
+            "api_key": "secret-qr",
+        },
+    })
+    assert reviewer is not None
+    assert reviewer.model_name == "claude-opus-5-5"
+    assert reviewer.fail_open is True
+    assert reviewer.max_traces == 2

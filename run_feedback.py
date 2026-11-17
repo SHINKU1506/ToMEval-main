@@ -219,6 +219,7 @@ def run_pipeline(config_path: str):
         logger.info(f"{'='*70}")
         from feedback.stage3_synthesis import run_stage3_synthesis
         from feedback.difficulty_gate import build_difficulty_gate
+        from feedback.quality_reviewer import build_quality_reviewer
 
         # 难度闸门：synthesis.difficulty_gate 给阈值，roles.difficulty_gate 给 solver 模型与凭证。
         gate_settings = dict(syn_config.get("difficulty_gate") or {})
@@ -231,6 +232,22 @@ def run_pipeline(config_path: str):
                 f"  🎯 难度闸门: {difficulty_gate.model_name} pass@{difficulty_gate.k}, "
                 f"{difficulty_gate.min_solve_rate} ≤ solve_rate ≤ {difficulty_gate.max_solve_rate}, "
                 f"fail_open={difficulty_gate.fail_open}, 适用难度 {list(gate_difficulties)}"
+            )
+
+        # 内容质量复核：synthesis.quality_review 给开关与策略，roles.quality_review 给审稿模型与凭证。
+        review_settings = dict(syn_config.get("quality_review") or {})
+        if review_settings.get("enabled"):
+            review_settings["llm"] = (
+                roles.get("quality_review")
+                or roles.get("adjudication")
+                or diagnosis_llm_config
+            )
+        quality_reviewer = build_quality_reviewer(review_settings)
+        review_difficulties = tuple(review_settings.get("difficulties") or gate_difficulties)
+        if quality_reviewer is not None:
+            logger.info(
+                f"  🔎 内容质量复核: {quality_reviewer.model_name}, "
+                f"fail_open={quality_reviewer.fail_open}, 适用难度 {list(review_difficulties)}"
             )
 
         for ds_info in synthesis_datasets:
@@ -280,6 +297,8 @@ def run_pipeline(config_path: str):
                     difficulty_weights=difficulty_weights,
                     difficulty_gate=difficulty_gate,
                     gate_difficulties=gate_difficulties,
+                    quality_reviewer=quality_reviewer,
+                    review_difficulties=review_difficulties,
                 )
                 if out_path:
                     with open(out_path, encoding="utf-8") as f:

@@ -255,12 +255,14 @@ class DifficultyGate:
                 )
                 rep_trace = {k: v for k, v in chosen.items() if k != "_raw_len"}
 
+            rollout_traces = [{k: v for k, v in tr.items() if k != "_raw_len"} for tr in traces]
             output[sid] = {
                 "correct": c,
                 "total": t,
                 "solve_rate": solve_rate,
                 "selected_option_counts": dict(opt_counts),
                 "solver_trace": rep_trace,
+                "rollout_traces": rollout_traces,
             }
         return output
 

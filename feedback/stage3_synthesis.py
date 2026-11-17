@@ -896,6 +896,20 @@ class _FallbackSynthesisOutput(BaseModel):
 
 # ============ 从维度诊断报告合成新数据 ============
 
+def _collect_sibling_variants(
+    results: Dict[Tuple[int, int], List[Dict[str, Any]]],
+    report_idx: int,
+    sample_idx: int,
+    samples_per_report: int,
+) -> List[Dict[str, Any]]:
+    """Return already-accepted sibling variants for `report_idx`, excluding `sample_idx`."""
+    return [
+        results[(report_idx, prev_s)][0]
+        for prev_s in range(samples_per_report)
+        if prev_s != sample_idx and (report_idx, prev_s) in results and results[(report_idx, prev_s)]
+    ]
+
+
 def synthesize_from_reports(
     reports: List[Dict[str, Any]],
     dataset_name: str,
@@ -910,10 +924,10 @@ def synthesize_from_reports(
     difficulty_gate: Optional[Any] = None,
     gate_difficulties: Tuple[str, ...] = ("hard",),
     gate_log_file: Optional[Path] = None,
+    quality_reviewer: Optional[Any] = None,
+    review_difficulties: Tuple[str, ...] = ("hard",),
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """从维度级诊断报告合成新样本，每份报告生成 samples_per_report 条题目。
-
-    跳过 pass@k 验证，直接合成后交守门员过滤。
 
     Args:
         reports: DimensionDiagnosisReport dict 列表
@@ -925,7 +939,10 @@ def synthesize_from_reports(
         output_file: 若提供，每批完成后追加写入该文件
         difficulty_gate: 若提供（DifficultyGate），gate_difficulties 内的题先跑 solver pass@k，
             solve_rate 超阈值的题打回重写；最后一轮仍过易则丢弃
-        gate_log_file: 若提供，追加写入每次闸门判定（含被拒题目）
+        gate_log_file: 若提供，追加写入每次闸门/质检判定（含被拒题目）
+        quality_reviewer: 若提供（QualityReviewer），对通过难度闸门（或未启用闸门时直接对
+            review_difficulties 内）的候选做内容质量复核，不通过则附具体审稿意见打回重写
+        review_difficulties: 触发内容质量复核的难度标签元组
 
     Returns:
         (synthesized_data, stats) 元组
@@ -967,10 +984,11 @@ def synthesize_from_reports(
         for r_idx in range(len(reports))
         if (r_idx, s_idx) not in _skip
     ]
-    results: Dict[Tuple[int, int], Dict[str, Any]] = {}
+    results: Dict[Tuple[int, int], List[Dict[str, Any]]] = {}
     last_failed: Dict[Tuple[int, int], Dict[str, Any]] = {}
     generation_attempts: Dict[Tuple[int, int], int] = {p: 0 for p in pending_pairs}
     gate_rejected = 0
+    quality_review_rejected = 0
 
     for round_idx in range(max_retries):
         if not pending_pairs:
@@ -1008,11 +1026,7 @@ def synthesize_from_reports(
             # 合成语言由 Stage 2 报告的 _meta.lang 决定（维度分组已按语言拆分）。
             batch_prompts = []
             for r_idx, s_idx in batch_pairs:
-                siblings = [
-                    results[(r_idx, prev_s)][0]
-                    for prev_s in range(samples_per_report)
-                    if prev_s != s_idx and (r_idx, prev_s) in results and results[(r_idx, prev_s)]
-                ]
+                siblings = _collect_sibling_variants(results, r_idx, s_idx, samples_per_report)
                 prompt_kwargs: Dict[str, Any] = dict(
                     report=reports[r_idx],
                     dataset_name=dataset_name,
@@ -1054,8 +1068,10 @@ def synthesize_from_reports(
                 )
 
             batch_new: List[Dict[str, Any]] = []
-            # 通过结构校验、等待难度闸门判定的 pair → rows
+            # 通过结构校验、等待难度闸门或直接等待质量复核的 pair → (rows, pair_difficulty)
             gate_candidates: Dict[Tuple[int, int], List[Dict[str, Any]]] = {}
+            pending_review: List[Dict[str, Any]] = []
+            pair_difficulties: Dict[Tuple[int, int], str] = {}
             for pair, resp in zip(batch_pairs, gen_results_raw):
                 r_idx, s_idx = pair
                 generation_attempts[pair] = generation_attempts.get(pair, 0) + 1
@@ -1151,8 +1167,18 @@ def synthesize_from_reports(
                     plan_text = str(getattr(q, "reasoning_trap_plan", "") or "").strip()
                     if plan_text and q_rows:
                         q_rows[0]["_reasoning_trap_plan"] = plan_text
+                    pair_difficulties[pair] = pair_difficulty
                     if difficulty_gate is not None and pair_difficulty in gate_difficulties:
                         gate_candidates[pair] = q_rows
+                        continue
+                    if quality_reviewer is not None and pair_difficulty in review_difficulties:
+                        pending_review.append({
+                            "pair": pair,
+                            "q_rows": q_rows,
+                            "gate_entry": None,
+                            "picked": {},
+                            "solver_result": None,
+                        })
                         continue
                     results[pair] = q_rows
                     batch_new.extend(q_rows)
@@ -1168,10 +1194,10 @@ def synthesize_from_reports(
                     else:
                         last_failed[pair] = {"_failure_reason": "structured_output_failed"}
 
+            gate_log: List[Dict[str, Any]] = []
             if gate_candidates:
                 gate_rows = [row for rows in gate_candidates.values() for row in rows]
                 solve_stats = difficulty_gate.evaluate(gate_rows, dataset_name)
-                gate_log: List[Dict[str, Any]] = []
                 for pair, q_rows in gate_candidates.items():
                     row_stats = [solve_stats.get(str((r.get("meta") or {}).get("id"))) for r in q_rows]
                     passed = all(difficulty_gate.passes(st) for st in row_stats)
@@ -1188,21 +1214,37 @@ def synthesize_from_reports(
                         if "too_hard_or_unanswerable" in reasons
                         else ("too_easy" if "too_easy" in reasons else ("missing_eval_stats" if reasons else None))
                     )
-                    gate_log.append({
+                    gate_entry = {
                         "pair": list(pair),
                         "round": round_idx + 1,
                         "solver": difficulty_gate.model_name,
                         "stats": row_stats,
                         "passed": passed,
                         "reason": gate_reason,
-                    })
+                    }
+                    gate_log.append(gate_entry)
+                    valid_stats = [st for st in row_stats if st]
                     if passed:
+                        picked = valid_stats[0] if valid_stats else {}
+                        solver_result = (
+                            f"{picked['correct']}/{picked['total']} correct by the target model"
+                            if picked
+                            else None
+                        )
+                        if quality_reviewer is not None and pair_difficulties.get(pair) in review_difficulties:
+                            pending_review.append({
+                                "pair": pair,
+                                "q_rows": q_rows,
+                                "gate_entry": gate_entry,
+                                "picked": picked,
+                                "solver_result": solver_result,
+                            })
+                            continue
                         results[pair] = q_rows
                         batch_new.extend(q_rows)
                         success_this_round += 1
                         continue
                     gate_rejected += 1
-                    valid_stats = [st for st in row_stats if st]
                     if valid_stats:
                         picked = (
                             min(valid_stats, key=lambda st: st["solve_rate"])
@@ -1225,12 +1267,86 @@ def synthesize_from_reports(
                     if picked.get("selected_option_counts"):
                         last_failed[pair]["selected_option_counts"] = picked["selected_option_counts"]
                     if gate_log_file is not None:
-                        gate_log[-1]["rejected_rows"] = q_rows
-                if gate_log_file is not None:
-                    gate_log_file.parent.mkdir(parents=True, exist_ok=True)
-                    with open(gate_log_file, "a", encoding="utf-8") as _f:
-                        for item in gate_log:
-                            _f.write(json.dumps(item, ensure_ascii=False) + "\n")
+                        gate_entry["rejected_rows"] = q_rows
+
+            if pending_review:
+                review_inputs = [
+                    {
+                        "row": item["q_rows"][0],
+                        "report": reports[item["pair"][0]],
+                        "gate_stats": item["picked"] or None,
+                        "sibling_questions": _collect_sibling_variants(
+                            results, item["pair"][0], item["pair"][1], samples_per_report
+                        ),
+                    }
+                    for item in pending_review
+                ]
+                verdicts = quality_reviewer.review_batch(review_inputs, dataset_name)
+                for item, verdict in zip(pending_review, verdicts):
+                    pair = item["pair"]
+                    q_rows = item["q_rows"]
+                    gate_entry = item["gate_entry"]
+                    picked = item["picked"]
+                    decision = str(verdict.get("decision") or "reject")
+                    if decision == "accept":
+                        if gate_entry is not None:
+                            gate_entry["quality_review"] = verdict
+                        elif gate_log_file is not None:
+                            gate_log.append({
+                                "pair": list(pair),
+                                "round": round_idx + 1,
+                                "reviewer": getattr(quality_reviewer, "model_name", "unknown"),
+                                "passed": True,
+                                "reason": None,
+                                "quality_review": verdict,
+                            })
+                        results[pair] = q_rows
+                        batch_new.extend(q_rows)
+                        success_this_round += 1
+                        continue
+
+                    quality_review_rejected += 1
+                    review_reason = (
+                        "quality_review_error"
+                        if decision == "error"
+                        else "quality_review_rejected"
+                    )
+                    last_failed[pair] = {
+                        "story": q_rows[0].get("story"),
+                        "question": q_rows[0].get("question"),
+                        "answer": q_rows[0].get("answer"),
+                        "gate_reason": review_reason,
+                        "quality_review": verdict,
+                    }
+                    if item["solver_result"]:
+                        last_failed[pair]["solver_result"] = item["solver_result"]
+                    if picked.get("solver_trace"):
+                        last_failed[pair]["solver_trace"] = picked["solver_trace"]
+                    if picked.get("selected_option_counts"):
+                        last_failed[pair]["selected_option_counts"] = picked["selected_option_counts"]
+
+                    if gate_entry is not None:
+                        gate_entry["passed"] = False
+                        gate_entry["reason"] = review_reason
+                        gate_entry["quality_review"] = verdict
+                        if gate_log_file is not None:
+                            gate_entry["rejected_rows"] = q_rows
+                    elif gate_log_file is not None:
+                        gate_log.append({
+                            "pair": list(pair),
+                            "round": round_idx + 1,
+                            "reviewer": getattr(quality_reviewer, "model_name", "unknown"),
+                            "passed": False,
+                            "reason": review_reason,
+                            "quality_review": verdict,
+                            "rejected_rows": q_rows,
+                        })
+
+            if gate_log and gate_log_file is not None:
+                gate_log_file.parent.mkdir(parents=True, exist_ok=True)
+                with open(gate_log_file, "a", encoding="utf-8") as _f:
+                    for item in gate_log:
+                        _f.write(json.dumps(item, ensure_ascii=False) + "\n")
 
             if output_file is not None and batch_new:
                 output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -1254,6 +1370,7 @@ def synthesize_from_reports(
         "failed": total_target - len(final_results),
         "total_generation_calls": sum(generation_attempts.values()),
         "difficulty_gate_rejected": gate_rejected,
+        "quality_review_rejected": quality_review_rejected,
     }
 
     logger.info(f"synthesize_from_reports complete: {len(final_results)}/{total_target} questions produced")
@@ -1310,6 +1427,8 @@ def run_stage3_synthesis(
     difficulty_weights: Optional[Dict[str, float]] = None,
     difficulty_gate: Optional[Any] = None,
     gate_difficulties: Tuple[str, ...] = ("hard",),
+    quality_reviewer: Optional[Any] = None,
+    review_difficulties: Tuple[str, ...] = ("hard",),
 ) -> Optional[Path]:
     """从维度诊断报告（dimension_reports.jsonl）生成并保存原始候选数据
 
@@ -1386,10 +1505,18 @@ def run_stage3_synthesis(
         difficulty_weights=difficulty_weights,
         difficulty_gate=difficulty_gate,
         gate_difficulties=gate_difficulties,
-        gate_log_file=(output_file.parent / f"difficulty_gate_{safe_model}.jsonl") if difficulty_gate else None,
+        gate_log_file=(
+            (output_file.parent / f"difficulty_gate_{safe_model}.jsonl")
+            if (difficulty_gate or quality_reviewer)
+            else None
+        ),
+        quality_reviewer=quality_reviewer,
+        review_difficulties=review_difficulties,
     )
     if difficulty_gate is not None:
         logger.info(f"  难度闸门（{difficulty_gate.model_name} pass@{difficulty_gate.k}）拒绝 {stats.get('difficulty_gate_rejected', 0)} 次")
+    if quality_reviewer is not None:
+        logger.info(f"  内容质量复核（{quality_reviewer.model_name}）拒绝 {stats.get('quality_review_rejected', 0)} 次")
 
     if not synthesized:
         logger.warning("  No new synthesized questions produced")
