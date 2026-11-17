@@ -1366,3 +1366,50 @@ def test_retry_prompt_injects_deshuffled_solver_cot_and_anti_drift_rules():
         assert "Medic left so check cancelled -> pick C." in prompt
         assert "Do NOT play whack-a-mole" in prompt
         assert prompt.count("Medic left so check cancelled -> pick C.") == 1
+
+
+def test_report_sanitizer_preserves_negated_guardrails_and_expands_binary_mcq():
+    from feedback.prompts import _sanitize_report_items
+
+    legacy_spoilers = [
+        "At least one relevant agent must respond in a way that confirms or disambiguates the implied intention without stating it explicitly.",
+        "Use a glance and smile cue to hint at the hidden item.",
+        "Make the correct answer 'pick one at random'.",
+        "Enforce 'almost none != 0' when counting items.",
+    ]
+    assert _sanitize_report_items(legacy_spoilers) == []
+
+    valid_guardrails = [
+        "The story must end at the queried utterance or act. No later reply, action, or acceptance by any agent may confirm or disambiguates the intention.",
+        "Nothing after the utterance, such as a listener's reply, a search, or a discovery, may confirm or disambiguate the answer.",
+        "The covert exchange must happen privately between Agent A and Agent B through a non-verbal or coded channel other than glances or smiles.",
+        "Gaze, smiles, and tone descriptions are not allowed.",
+        "The story ends at the moment of the utterance, without relying on any subsequent reaction or verbal confirmation.",
+        "故事在 Agent A 接收信号后立即结束，不出现任何后续回应或确认性反应，答案只能由此前的证据推出。",
+        "问题只询问说服策略这一层，不同时询问情绪结果或后续行为，避免复合提问。",
+        "Seed caveat: in both seeds, a later reaction helps disambiguate. New items must make the nomination intention inferable before the queried exchange.",
+        "Container X carries a content label naming Object X; Agent A opens it, confirms Object X is absent, and reseals it.",
+        "Plausible-range distractor ignoring the observer's confirmed subtotal.",
+        "Disambiguate it structurally with an explicit temporal anchor before the decisive event.",
+        "Intermediate-location distractor attracts a model that misses a later move.",
+    ]
+    assert _sanitize_report_items(valid_guardrails) == valid_guardrails
+
+    report = {
+        "dimension": "Non-Literal Communication: Involuntary lies",
+        "primary_cognitive_operation": "causal_reasoning",
+        "common_error_patterns": ["Agent A confuses sincerity with factual truth."],
+        "required_distractor_logic": [
+            "'Yes' must attract models that reason 'Agent A tells the truth', conflating sincerity with accuracy."
+        ],
+        "hard_constraints": [
+            valid_guardrails[1],
+            valid_guardrails[2],
+            "For 4-choice MCQ synthesis, expand any binary ('Yes'/'No', 'True'/'False') seed options referenced in this report into 4 distinct, parallel proposition options.",
+        ],
+        "_meta": {"lang": "en"},
+    }
+    prompt = build_stage2_generation_from_report_prompt(report, "ToMBench", target_difficulty="hard")
+    assert "other than glances or smiles" in prompt
+    assert "Nothing after the utterance" in prompt
+    assert "expand them into 4 distinct, parallel proposition/explanation options" in prompt

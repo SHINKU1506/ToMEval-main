@@ -722,29 +722,67 @@ _SYNTHESIS_LANGUAGE_DIRECTIVES = {
 
 # Report items that ask for a post-target confirming reaction contradict the
 # STOP AT TARGET MOMENT rule and leak the answer into the story.
+# Keep negated anti-spoiler guardrails (e.g. "No later reply may confirm",
+# "other than glances or smiles", "不出现后续确认") and seed-defect caveats intact.
+_SANITIZER_CLAUSE_SPLIT_RE = re.compile(r"(?:[.;?。；！？\n]|!(?!=))+")
+_SANITIZER_PREFIX_NEGATION_RE = re.compile(
+    r"(?:\b(?:no|not|never|nothing|neither|nor|without|omit\w*|avoid\w*|forbid\w*|prohibit\w*|prevent\w*|"
+    r"exclud\w*|rule\s+out|rules\s+out|rather\s+than|instead\s+of|other\s+than|stop\w*\s+(?:at|before)|"
+    r"end\w*\s+(?:at|before)|prior\s+to|before\s+any|free\s+of|lack\w*)\b|n['’]t\b|"
+    r"不得|禁止|不要|切勿|严禁|不能|不可|避免|不依赖|而非|而不是|无需|没有|未|不同时|"
+    r"不(?:出现|包含|加入|使用|设|提供|描写|写入|叙述|写|需要|应|得|询问)|停止|截止|混淆了|误将|误把)",
+    re.IGNORECASE,
+)
+_SANITIZER_SUFFIX_PROHIBITION_RE = re.compile(
+    r"(?:\b(?:must\s+not|may\s+not|cannot|can['’]t|should\s+not|shouldn['’]t|will\s+not|"
+    r"(?:is|are)\s+not\s+(?:allowed|needed|used|permitted|required|diagnostic))\b|"
+    r"避免复合|混淆了)",
+    re.IGNORECASE,
+)
+_SANITIZER_SEED_CAVEAT_RE = re.compile(
+    r"(?:^\s*(?:seed\s+(?:caveat|defect|answer|quality|note)|evidence\s+caveat|the\s+seed\s+answer|in\s+the\s+source\s+items|种子(?:缺陷|证据)|原始种子)|"
+    r"\b(?:seed\s+(?:caveat|defect|defects|answer-key)|source\s+items)\b|种子证据存在缺陷|种子缺陷)",
+    re.IGNORECASE,
+)
 _SPOILER_CONSTRAINT_PATTERNS = (
-    re.compile(r"\b(?:confirm\w*|disambiguat\w*)\b", re.IGNORECASE),
-    re.compile(
-        r"\b(?:subsequent|later|follow-?up|ensuing|resulting)\s+(?:\w+\s+)?"
-        r"(?:response|reply|replies|reaction|action|actions|behaviou?r|move|compliance)\b",
-        re.IGNORECASE,
-    ),
-    re.compile(r"\brespond\w*\s+in\s+a\s+way\s+that\b", re.IGNORECASE),
+    re.compile(r"\b(?:respond\w*|react\w*|reply|replies)\b.{0,50}\b(?:confirm\w*|disambiguat\w*)\b", re.IGNORECASE),
+    re.compile(r"\b(?:observable\s+action|subsequent\s+\w+|later\s+\w+)\b.{0,50}\b(?:confirm\w*|disambiguat\w*)\b", re.IGNORECASE),
+    re.compile(r"\bsubsequent\s+(?:response|reply|replies|reaction|action|actions|behaviou?r)\b", re.IGNORECASE),
     re.compile(r"(?:随后|之后|后续)的?(?:回应|回复|反应|行动|动作|行为)|证实|确认了?(?:其|该|这一)?(?:意图|含义|答案)"),
     re.compile(r"\b(?:gaze|glanc\w*|eye\s+contact|smil\w*|grin\w*|wink\w*)\b", re.IGNORECASE),
     re.compile(r"\bpick\s+(?:one\s+)?at\s+random\b", re.IGNORECASE),
-    re.compile(r"\b(?:almost|nearly)\s+none\b.*?(?:!=|not\s+equal|never\s+zero|non-?zero)", re.IGNORECASE),
+    re.compile(r"(?:\b(?:almost|nearly)\s+none\b.*?(?:!=|not\s+equal|never\s+zero)|\b(?:ensure|enforce)\b.{0,40}\b(?:almost|nearly)\s+none\b.{0,40}\bnon-?zero\b)", re.IGNORECASE),
 )
 
 
 def _sanitize_report_items(items: Any) -> List[str]:
-    """Drop de-identified report items that depend on a post-target reaction."""
+    """Drop legacy positive spoiler directives while preserving negated anti-spoiler guardrails."""
     if not isinstance(items, list):
         return []
-    return [
-        str(item) for item in items
-        if str(item).strip() and not any(p.search(str(item)) for p in _SPOILER_CONSTRAINT_PATTERNS)
-    ]
+    kept: List[str] = []
+    for raw_item in items:
+        text = str(raw_item)
+        if not text.strip():
+            continue
+        if _SANITIZER_SEED_CAVEAT_RE.search(text):
+            kept.append(text)
+            continue
+        clauses = [c.strip() for c in _SANITIZER_CLAUSE_SPLIT_RE.split(text) if c.strip()]
+        has_unnegated_spoiler = False
+        for clause in clauses:
+            for pattern in _SPOILER_CONSTRAINT_PATTERNS:
+                match = pattern.search(clause)
+                if match:
+                    prefix = clause[:match.start()]
+                    if _SANITIZER_PREFIX_NEGATION_RE.search(prefix) or _SANITIZER_SUFFIX_PROHIBITION_RE.search(clause):
+                        continue
+                    has_unnegated_spoiler = True
+                    break
+            if has_unnegated_spoiler:
+                break
+        if not has_unnegated_spoiler:
+            kept.append(text)
+    return kept
 
 
 # Rotated per variant so sibling variants of one report differ in how the
@@ -796,7 +834,8 @@ _GROUNDED_DISTRACTOR_RULES = (
     "- Every option may mention ONLY people, objects, and events that appear in the story; never invent a new character, motive, defect, or event inside an option\n"
     "- Every option must be wrong because of a specific story fact, not because it introduces unsupported information (never let a distractor remain factually true under the narrative)\n"
     "- Match the certainty and hedging style across options: if one option expresses uncertainty, the others must use comparable epistemic framing\n"
-    "- Do NOT use 'cannot tell / pick one at random / 无法确定' as a meta-option unless testing strict physical occlusion/indistinguishability, and even then all 4 options must share the exact same sentence frame and length (0.80x-1.20x); NEVER bundle two independent claims into one option"
+    "- Do NOT use 'cannot tell / pick one at random / 无法确定' as a meta-option unless testing strict physical occlusion/indistinguishability, and even then all 4 options must share the exact same sentence frame and length (0.80x-1.20x); NEVER bundle two independent claims into one option\n"
+    "- When synthesizing for a 4-choice MCQ dataset and a diagnosis report mentions binary ('Yes'/'No', 'True'/'False', '是'/'否') seed options, expand them into 4 distinct, parallel proposition/explanation options (1 correct answer + 3 distinct shortcut distractors) rather than outputting binary Yes/No choices"
 )
 
 
