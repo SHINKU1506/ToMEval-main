@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Dict, Optional
 
 from src.evaluation.lang import get_sample_lang
-from src.evaluation.prompts import boxed_directive, render_options_block
+from src.evaluation.prompts import boxed_directive, render_options_block, sanitize_mcq_question
 from src.evaluation.protocols import reasoning_for
 from src.evaluation.types import StandardizedSample
 
@@ -73,9 +73,11 @@ def build_prompt(
 ) -> str:
     lang = get_sample_lang(sample.get("meta"))
     options_block = render_options_block(option_map or {})
+    has_options = bool(option_map) or bool((sample.get("answer") or {}).get("wrong_answers"))
+    clean_question = sanitize_mcq_question(sample["question"], has_options)
     template = BODY_ZH if lang == "zh" else BODY_EN
     body = template.format(
-        story=sample["story"], question=sample["question"], options_block=options_block
+        story=sample["story"], question=clean_question, options_block=options_block
     )
     # 协议模式(include_instruction=False)由 system prompt 承载 \boxed 指令；
     # legacy 模式(无协议)在 body 末尾补一条，保证仍输出标准 \boxed。

@@ -38,12 +38,14 @@ from filter.utils import (
 )
 from src.evaluation.lang import get_sample_lang
 from src.evaluation.prompts import (
+    ANSWER_INSTRUCTIONS,
     CHOICE_QA_TEMPLATE,
     CHOICE_QA_TEMPLATE_ZH,
     OPEN_QA_TEMPLATE,
     OPEN_QA_TEMPLATE_ZH,
     build_option_bundle,
     prompt_type as compute_prompt_type,
+    sanitize_mcq_question,
 )
 from src.llm.content_client import ContentClient
 
@@ -54,13 +56,6 @@ logger = logging.getLogger(__name__)
 _STORY_PLACEHOLDER = {"en": "(story omitted)", "zh": "（故事略）"}
 _QUESTION_PLACEHOLDER = {"en": "(question omitted)", "zh": "（问题略）"}
 
-_ANSWER_INSTRUCTIONS = {
-    ("en", "mcq_single"): "Select the single best option and return exactly one option letter.",
-    ("en", "mcq_multi"): "Select every correct option and return a list of option letters.",
-    ("zh", "mcq_single"): "请选出唯一最合适的选项，只返回一个选项字母。",
-    ("zh", "mcq_multi"): "请选出所有正确的选项，返回选项字母列表。",
-}
-
 
 def _options_block(option_map: Dict[str, str]) -> str:
     return "\n".join(f"{letter}. {text}" for letter, text in option_map.items())
@@ -68,7 +63,12 @@ def _options_block(option_map: Dict[str, str]) -> str:
 
 def _answer_instruction(prompt_type: str, lang: str = "en") -> str:
     key = "mcq_multi" if prompt_type == "mcq_multi" else "mcq_single"
-    return _ANSWER_INSTRUCTIONS[(lang, key)]
+    return ANSWER_INSTRUCTIONS[(lang, key)]
+
+
+def _clean_question_for_shortcut(sample: Dict[str, Any]) -> str:
+    wrong = (sample.get("answer") or {}).get("wrong_answers")
+    return sanitize_mcq_question(str(sample.get("question", "") or ""), bool(wrong))
 
 
 def build_no_story_prompt(sample: Dict[str, Any], option_map: Dict[str, str], prompt_type: str) -> str:
@@ -76,7 +76,7 @@ def build_no_story_prompt(sample: Dict[str, Any], option_map: Dict[str, str], pr
     template = CHOICE_QA_TEMPLATE_ZH if lang == "zh" else CHOICE_QA_TEMPLATE
     return template.format(
         story=_STORY_PLACEHOLDER[lang],
-        question=sample["question"],
+        question=_clean_question_for_shortcut(sample),
         options_block=_options_block(option_map),
         answer_instruction=_answer_instruction(prompt_type, lang),
     )
@@ -98,7 +98,7 @@ def build_no_options_prompt(sample: Dict[str, Any]) -> str:
     template = OPEN_QA_TEMPLATE_ZH if lang == "zh" else OPEN_QA_TEMPLATE
     return template.format(
         story=sample["story"],
-        question=sample["question"],
+        question=_clean_question_for_shortcut(sample),
     )
 
 

@@ -14,6 +14,48 @@ from .types import AnswerBlock, PromptType, StandardizedSample
 
 OPTION_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
+_MCQ_FOOTER_RE = re.compile(
+    r"(?:\n|\s)+(?:请选择(?:正确答案|最合适的一项)|Please\s+(?:select|choose)\s+the\s+(?:correct|best)\s+answer|正确答案\s*[:：]).*$",
+    re.DOTALL | re.IGNORECASE,
+)
+
+_OPTION_MARKER_GUARD = (
+    r"(?<!Room\s)(?<!Grade\s)(?<!Type\s)(?<!Plan\s)(?<!Option\s)"
+    r"(?<!Person\s)(?<!Agent\s)(?<!Box\s)(?<!Door\s)(?<!Basket\s)"
+    r"(?<!Bag\s)(?<!Group\s)(?<!Part\s)(?<!Section\s)(?<!Step\s)"
+    r"(?<!Case\s)(?<!Item\s)(?<![A-Za-z0-9])"
+)
+
+_EMBEDDED_OPTION_BLOCK_RE = re.compile(
+    rf"{_OPTION_MARKER_GUARD}A[.．)]\s*\S.*?(?<![A-Za-z0-9])B[.．)]\s*\S",
+    re.DOTALL,
+)
+
+
+def strip_mcq_footer(text: str) -> str:
+    """Remove trailing MCQ answer-selection instructions (e.g. '\\n请选择正确答案。')."""
+    return _MCQ_FOOTER_RE.sub("", str(text or "")).strip()
+
+
+def strip_embedded_mcq_options(q_text: str) -> str:
+    """Remove an embedded A/B/... option block and trailing MCQ footer from a question."""
+    text = str(q_text or "")
+    match = _EMBEDDED_OPTION_BLOCK_RE.search(text)
+    if match:
+        stripped = text[: match.start()].rstrip()
+        if stripped:
+            return strip_mcq_footer(stripped)
+    return strip_mcq_footer(text)
+
+
+def sanitize_mcq_question(q_text: str, has_wrong_answers: bool) -> str:
+    """Strip embedded options from MCQ questions so rendered options never conflict or leak."""
+    text = str(q_text or "").strip()
+    if not has_wrong_answers or not text:
+        return text
+    cleaned = strip_embedded_mcq_options(text)
+    return cleaned or text
+
 OPEN_QA_TEMPLATE = """You are answering a question about a story.
 
 Story:
@@ -178,9 +220,11 @@ def build_prompt(
     current_prompt_type = prompt_type(sample["answer"])
     # 指令语言跟随样本语言（meta.lang / meta.language），结构协议不变。
     lang = get_sample_lang(sample.get("meta"))
+    has_options = bool(option_map) or current_prompt_type != "open"
+    clean_question = sanitize_mcq_question(sample["question"], has_options)
     if current_prompt_type == "open":
         template = OPEN_QA_TEMPLATE_ZH if lang == "zh" else OPEN_QA_TEMPLATE
-        return template.format(story=sample["story"], question=sample["question"])
+        return template.format(story=sample["story"], question=clean_question)
 
     # 在 prompt 中显式展示“字母 -> 文本”的当轮映射，方便 prediction 和 judge 对齐。
     options_block = "\n".join(f"{letter}. {text}" for letter, text in option_map.items())
@@ -189,7 +233,7 @@ def build_prompt(
     template = CHOICE_QA_TEMPLATE_ZH if lang == "zh" else CHOICE_QA_TEMPLATE
     return template.format(
         story=sample["story"],
-        question=sample["question"],
+        question=clean_question,
         options_block=options_block,
         answer_instruction=answer_instruction,
     ).rstrip()

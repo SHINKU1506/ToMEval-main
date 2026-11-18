@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Dict, Optional
 
-from src.evaluation.prompts import boxed_directive
+from src.evaluation.prompts import boxed_directive, sanitize_mcq_question
 from src.evaluation.protocols import reasoning_for
 from src.evaluation.types import StandardizedSample
 
@@ -54,9 +54,11 @@ def build_prompt(
     option_map: Optional[Dict[str, str]],
     include_instruction: bool = True,
 ) -> str:
+    has_options = bool(option_map) or bool((sample.get("answer") or {}).get("wrong_answers"))
+    clean_question = sanitize_mcq_question(sample["question"], has_options)
     body = TEMPLATE.format(
         story=sample["story"],
-        question=sample["question"],
+        question=clean_question,
         choices_inline=_inline_choices(option_map),
         note=HITOM_NOTE,
     )

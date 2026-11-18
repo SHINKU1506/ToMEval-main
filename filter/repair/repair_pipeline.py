@@ -27,6 +27,7 @@ from filter.base import load_judge_client
 from filter.repair.repair_prompts import build_repair_prompt
 from filter.utils import resolve_sample_id, write_parquet
 from src.evaluation.lang import get_sample_lang
+from src.evaluation.prompts import sanitize_mcq_question
 from src.llm.structure_client import StructureClient
 
 logger = logging.getLogger(__name__)
@@ -106,7 +107,7 @@ def repair_samples(
             repair_type=rt,
             dataset=dataset,
             story=str(row.get("story", "") or ""),
-            question=str(row.get("question", "") or ""),
+            question=sanitize_mcq_question(str(row.get("question", "") or ""), bool(answer.get("wrong_answers"))),
             correct_answers=correct,
             wrong_answers=wrong,
             failure_label=str(label_row.get("answerability_label") or ""),
@@ -149,7 +150,7 @@ def repair_samples(
         repaired_rows.append({
             **original,
             "story": repaired.story,
-            "question": repaired.question,
+            "question": sanitize_mcq_question(repaired.question, bool(repaired.wrong_answers)),
             "answer": {
                 "correct_answers": list(repaired.correct_answers),
                 "wrong_answers": list(repaired.wrong_answers),

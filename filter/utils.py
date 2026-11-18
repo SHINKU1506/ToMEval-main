@@ -44,10 +44,12 @@ def row_to_sample(row: Any) -> Dict[str, Any]:
     correct = list(correct_raw) if correct_raw is not None else []
     wrong = list(wrong_raw) if wrong_raw is not None else []
     meta = row.get("meta")
+    from src.evaluation.prompts import sanitize_mcq_question
+    clean_question = sanitize_mcq_question(str(row.get("question", "") or ""), bool(wrong))
     return {
         "sample_id": resolve_sample_id(row, 0),
         "story": str(row.get("story", "") or ""),
-        "question": str(row.get("question", "") or ""),
+        "question": clean_question,
         "answer": {"correct_answers": correct, "wrong_answers": wrong},
         # 透传 meta，让下游 prompt 构造能感知样本语言（meta.lang / meta.language）。
         "meta": meta if isinstance(meta, dict) else {},

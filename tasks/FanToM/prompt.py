@@ -17,7 +17,7 @@ from __future__ import annotations
 from typing import Dict, Optional
 
 from src.evaluation.lang import get_sample_lang
-from src.evaluation.prompts import boxed_directive, prompt_type, render_options_block
+from src.evaluation.prompts import boxed_directive, prompt_type, render_options_block, sanitize_mcq_question
 from src.evaluation.protocols import reasoning_for
 from src.evaluation.types import StandardizedSample
 
@@ -59,11 +59,13 @@ def build_prompt(
     meta = sample.get("meta") or {}
     lang = get_sample_lang(meta)
     context = meta.get("short_context") or sample["story"]
+    has_options = bool(option_map) or bool((sample.get("answer") or {}).get("wrong_answers"))
+    clean_question = sanitize_mcq_question(sample["question"], has_options)
     body = TEMPLATE.format(
         header=HEADER,
         context=context,
         extra=_extra_line(meta),
-        question=sample["question"],
+        question=clean_question,
         options_block=render_options_block(option_map or {}),
     )
     if include_instruction:

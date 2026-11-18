@@ -6,6 +6,7 @@ import yaml
 
 from src import runner
 
+from .prompts import sanitize_mcq_question
 from .types import AnswerBlock, StandardizedSample
 
 
@@ -58,7 +59,7 @@ def normalize_sample(row: Dict[str, Any], index: int) -> StandardizedSample:
     normalized: StandardizedSample = {
         "sample_id": build_sample_id({"meta": meta, **row}, index),
         "story": story.strip(),
-        "question": question.strip(),
+        "question": sanitize_mcq_question(question, bool(normalized_answer["wrong_answers"])),
         "answer": normalized_answer,
         "meta": meta,
     }

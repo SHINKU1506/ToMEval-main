@@ -24,6 +24,7 @@ from filter.base import load_answer_models
 from filter.prompts import ANSWERABILITY_FULL_PROMPT, ANSWERABILITY_FULL_PROMPT_ZH
 from filter.utils import resolve_sample_id, stringify_answer_list, write_parquet
 from src.evaluation.lang import get_sample_lang
+from src.evaluation.prompts import sanitize_mcq_question
 from src.llm.content_client import ContentClient
 from src.llm.llm_utils import extract_json
 
@@ -47,7 +48,8 @@ def _build_prompt(row: Any, dataset: str = "") -> str:
     )
     meta = row.get("meta") if isinstance(row.get("meta"), dict) else {}
     prompt_type = meta.get("prompt_type_override") or ("mcq_multi" if len(ca or []) > 1 else "")
-    question = str(row.get("question", "") or "")
+    has_wrong = wa is not None and len(wa) > 0
+    question = sanitize_mcq_question(str(row.get("question", "") or ""), has_wrong)
     correct_text = stringify_answer_list(ca if ca is not None else [])
     wrong_text = stringify_answer_list(wa if wa is not None else [])
     if prompt_type == "mcq_grouped" or meta.get("sub_questions"):

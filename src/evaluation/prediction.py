@@ -11,7 +11,7 @@ from .prompt_loaders import (
     load_task_prompt_builder,
     load_task_system_prompt_builder,
 )
-from .prompts import build_option_bundle, build_prompt, prompt_type
+from .prompts import build_option_bundle, build_prompt, prompt_type, sanitize_mcq_question
 from .protocols import AGENT_EXTRACTOR, extractor_name_for, shuffle_for, system_prompt_for
 from .storage import serialize_llm_response
 from .types import PredictionRecord, StandardizedSample
@@ -76,12 +76,16 @@ def predict_records(
             if agent_mode:
                 # 发给 agent 的结构化样本:绝不含 correct_letters/wrong_letters/answer。
                 lang = get_sample_lang(sample.get("meta"))
+                clean_question = sanitize_mcq_question(
+                    sample["question"],
+                    bool(option_map) or current_prompt_type != "open",
+                )
                 agent_payload: Dict[str, Any] = {
                     "sample_id": sample["sample_id"],
                     "prompt_type": current_prompt_type,
                     "lang": lang,
                     "story": sample["story"],
-                    "question": sample["question"],
+                    "question": clean_question,
                 }
                 if option_map:
                     agent_payload["options"] = option_map

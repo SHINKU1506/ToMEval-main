@@ -20,6 +20,11 @@ from tqdm import tqdm
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src import runner
+from src.evaluation.prompts import (
+    _OPTION_MARKER_GUARD,
+    strip_embedded_mcq_options as _strip_embedded_options,
+    strip_mcq_footer as _strip_mcq_footer,
+)
 from .prompts import (
     build_stage2_generation_from_report_prompt,
     resolve_variant_difficulty,
@@ -29,19 +34,6 @@ from .prompts import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-_MCQ_FOOTER_RE = re.compile(
-    r"(?:\n|\s)+(?:请选择(?:正确答案|最合适的一项)|Please\s+(?:select|choose)\s+the\s+(?:correct|best)\s+answer|正确答案\s*[:：]).*$",
-    re.DOTALL | re.IGNORECASE,
-)
-
-_OPTION_MARKER_GUARD = r"(?<!Room\s)(?<!Grade\s)(?<!Type\s)(?<!Plan\s)(?<!Option\s)(?<![A-Za-z])"
-
-
-def _strip_mcq_footer(text: str) -> str:
-    """Remove trailing prompt-leak instructions such as '\\n请选择正确答案。'."""
-    return _MCQ_FOOTER_RE.sub("", str(text or "")).strip()
 
 
 def _parse_options_from_question(q_text: str, correct_letter: str):
@@ -61,19 +53,6 @@ def _parse_options_from_question(q_text: str, correct_letter: str):
     correct_text = options_map.get(correct_letter, correct_letter)
     wrong_texts = [v for k, v in sorted(options_map.items()) if k != correct_letter]
     return correct_text, wrong_texts
-
-
-def _strip_embedded_options(q_text: str) -> str:
-    """Remove the answer-choice suffix from a ToMBench question.
-
-    The generator schema historically asked the model to place options in the
-    question. The standardized evaluator renders options separately, so
-    retaining that suffix creates two conflicting option blocks.
-    """
-    match = re.search(rf"{_OPTION_MARKER_GUARD}A[.．)]\s+", q_text, re.IGNORECASE)
-    if not match:
-        return _strip_mcq_footer(q_text)
-    return q_text[: match.start()].rstrip()
 
 
 def _parse_existing_pair_id(meta_id: str) -> Optional[Tuple[int, int]]:

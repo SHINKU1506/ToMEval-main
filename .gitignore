@@ -81,6 +81,7 @@ tests/*
 !tests/test_synthesize_grpo_data.py
 !tests/test_feedback_regressions.py
 !tests/test_tombench_gemini_repair.py
+!tests/test_eval_pollution_fixes.py
 figures/
 .pytest_cache/
 

@@ -14,7 +14,13 @@ from collections import OrderedDict
 from typing import Any, Dict, List, Optional
 
 from src.evaluation.lang import get_sample_lang
-from src.evaluation.prompts import boxed_directive, build_option_bundle, prompt_type, render_options_block
+from src.evaluation.prompts import (
+    boxed_directive,
+    build_option_bundle,
+    prompt_type,
+    render_options_block,
+    sanitize_mcq_question,
+)
 from src.evaluation.protocols import reasoning_for
 from src.evaluation.types import StandardizedSample
 
@@ -66,9 +72,13 @@ def prepare_samples(samples: List[StandardizedSample]) -> List[StandardizedSampl
             option_map, correct_letters, _wrong, _seed = build_option_bundle(
                 "EmoBench", f"{key}|{index}", member["answer"], 0, shuffle=True
             )
+            clean_q = sanitize_mcq_question(
+                member["question"],
+                bool(option_map) or bool((member.get("answer") or {}).get("wrong_answers")),
+            )
             sub_questions.append(
                 {
-                    "question": member["question"],
+                    "question": clean_q,
                     "subtype": (member.get("meta") or {}).get("question_subtype"),
                     "options": option_map or {},
                     "correct_letters": correct_letters,
@@ -110,9 +120,11 @@ def _grouped_body(sample: StandardizedSample, lang: str) -> str:
 
 def _single_body(sample: StandardizedSample, lang: str, option_map: Optional[Dict[str, str]]) -> str:
     options_block = render_options_block(option_map or {})
+    has_options = bool(option_map) or bool((sample.get("answer") or {}).get("wrong_answers"))
+    clean_question = sanitize_mcq_question(sample["question"], has_options)
     if lang == "zh":
-        return f"## 场景\n{sample['story']}\n\n## 问题\n{sample['question']}\n\n## 选项\n{options_block}"
-    return f"## Scenario\n{sample['story']}\n\n## Question\n{sample['question']}\n\n## Choices\n{options_block}"
+        return f"## 场景\n{sample['story']}\n\n## 问题\n{clean_question}\n\n## 选项\n{options_block}"
+    return f"## Scenario\n{sample['story']}\n\n## Question\n{clean_question}\n\n## Choices\n{options_block}"
 
 
 def build_prompt(
